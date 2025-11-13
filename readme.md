@@ -6,7 +6,8 @@ ID: codex_fusionapi_v1.0
 
 
 ## Formål
-Utforske og utvikle generative, parametriske modeller i Autodesk Fusion 360 via Python/C++ API.
+- Utforske og utvikle generative, parametriske modeller i Autodesk Fusion 360 via Python/C++ API.
+- Repoet er nå koblet til Codex på web.
 
 
 ## Hurtigstart
