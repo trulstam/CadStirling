@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.env
+
+
+# Fusion 360 & temp
+*.f3d
+*.bak
+*.tmp
+.DS_Store
+
+
+# Editors/IDE
+.vscode/
+.idea/
+
+
+# CI
+coverage/
