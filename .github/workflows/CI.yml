@@ -1,19 +1,31 @@
+# ID: codex_fusionapi_v1.0
 name: Lint & Policy Check
-on: [push, pull_request]
+
+on:
+  push:
+  pull_request:
+
 jobs:
-lint:
-runs-on: ubuntu-latest
-steps:
-- uses: actions/checkout@v4
-- uses: actions/setup-python@v5
-with:
-python-version: '3.x'
-- name: Install flake8
-run: pip install flake8
-- name: Lint Python
-run: flake8 scripts || true
-- name: ID Policy Check
-run: |
-echo "Checking ID policy..."
-egrep -R "\b(ID|Id|id)\s*:\s*codex_fusionapi_v[0-9]+(\.[0-9]+)?" -n README.md codex policies scripts || {
-echo "Missing required ID tag"; exit 1; }
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install flake8
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8
+
+      - name: Run flake8
+        run: |
+          flake8 scripts
+
+      - name: ID Policy Check
+        run: |
+          echo "Checking ID policy..."
+          egrep -R "\b(ID|Id|id)\s*:\s*codex_fusionapi_v[0-9]+(\.[0-9]+)?" -n readme.md codex policies scripts
