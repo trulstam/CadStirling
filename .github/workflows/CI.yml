@@ -26,7 +26,7 @@ jobs:
       - name: ID Policy Check
         run: |
           echo "Checking ID policy..."
-          if egrep -R '\b(ID|Id|id)\s*:\s*codex_fusionapi_v[0-9]+(\.[0-9]+)?' -n README.md codex policies scripts; then
+          if egrep -Ri 'ID\s*:\s*codex_fusionapi_v[0-9]+(\.[0-9]+)?' README.md codex policies scripts; then
             echo "ID tag OK"
           else
             echo "Missing required ID tag"
