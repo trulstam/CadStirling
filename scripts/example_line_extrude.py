@@ -1,28 +1,94 @@
 # ID: codex_fusionapi_v1.0
-name: Codex×Fusion360
-id: codex_fusionapi_v1.0
-version: 1.0.0
-owner: Truls Tambs-Lyche
+"""Eksempel: tegner en linje og ekstruderer profilen i Fusion 360.
+
+Skriptet viser hvordan man bruker Fusion 360 APIet til å:
+1. Opprette (eller bruke aktivt) design.
+2. Lage en skisse med en linje i XY-planet.
+3. Ekstrudere linjeprofilen til et solid.
+
+Ved kjøring spør skriptet etter ønsket linjelengde og ekstruderingshøyde.
+"""
+
+import adsk.core
+import adsk.fusion
+import traceback
+
+_COMPLIANCE_BANNER = "COMPLIANCE BANNER :: ID codex_fusionapi_v1.0 :: example_line_extrude"
+_handlers = []  # Holder referanser dersom vi utvider med hendelser senere.
 
 
-description: >
-Codex×Fusion360: bruk alltid siste Fusion360 API (Python/C++). Kode/dokumentasjon skal samsvare
-med oppdatert objektmodell/navnerom/metodestruktur. Sjekk syntaks mot offisielle kilder.
-Alle prompter og svar skal inneholde en unik ID-tag (codex_fusionapi_vX.Y/hash) for sporbarhet
-mellom Codex og denne chatten.
+def _ensure_design(app: adsk.core.Application) -> adsk.fusion.Design:
+    """Returnerer aktivt design, eller lager et nytt hvis ingen er aktive."""
+    product = app.activeProduct
+    design = adsk.fusion.Design.cast(product)
+    if design:
+        return design
+
+    documents = app.documents
+    new_doc = documents.add(adsk.core.DocumentTypes.FusionDesignDocumentType)
+    return adsk.fusion.Design.cast(new_doc.products.item(0))
 
 
-references:
-- API Manual: https://help.autodesk.com/view/fusion360/ENU/?guid=GUID-7B5A90C8-E94C-48DA-B16B-430729B734DC
-- Basic Concepts: https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/BasicConcepts_UM.htm
-- Dev Portal: https://aps.autodesk.com/developer/overview/autodesk-fusion-api
-- GitHub Samples: https://github.com/AutodeskFusion360
-- Forum: https://forums.autodesk.com/t5/fusion-360-api-and-scripts/bd-p/1229
-- Add-ins Guide: https://help.autodesk.com/view/fusion360/ENU/?guid=GUID-C1545D80-D804-4CF3-886D-9B5C54B2D7A2
+def _prompt_for_value(ui: adsk.core.UserInterface, prompt: str, default: str) -> str:
+    """Henter tekstverdi via inputBox og håndterer avbrytelse."""
+    value, is_canceled = ui.inputBox(prompt, "Parametere", default)
+    if is_canceled:
+        raise RuntimeError("Brukeren avbrøt parameterdialogen.")
+    return value
 
 
-policy:
-enforce_latest_api: true
-require_id_in_prompts: true
-require_id_in_code: true
-reject_outdated_calls: true
+def _create_line_and_extrude(design: adsk.fusion.Design, line_len_expr: str, extrude_height_expr: str) -> None:
+    units_mgr = design.unitsManager
+    line_len_cm = units_mgr.evaluateExpression(line_len_expr, "cm")
+    extrude_height = adsk.core.ValueInput.createByString(extrude_height_expr)
+
+    root = design.rootComponent
+    sketches = root.sketches
+    xy_plane = root.xYConstructionPlane
+
+    sketch = sketches.add(xy_plane)
+    lines = sketch.sketchCurves.sketchLines
+    start_point = adsk.core.Point3D.create(0, 0, 0)
+    end_point = adsk.core.Point3D.create(line_len_cm, 0, 0)
+    lines.addByTwoPoints(start_point, end_point)
+
+    profile = sketch.profiles.item(0)
+    extrudes = root.features.extrudeFeatures
+    extrude_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+    extrude_input.setDistanceExtent(False, extrude_height)
+    extrudes.add(extrude_input)
+
+
+def run(context: str) -> None:
+    app = adsk.core.Application.get()
+    ui = app.userInterface if app else None
+
+    print(_COMPLIANCE_BANNER)
+
+    try:
+        if not app or not ui:
+            raise RuntimeError("Fusion 360-appen/UI er ikke tilgjengelig.")
+
+        design = _ensure_design(app)
+
+        line_len_expr = _prompt_for_value(ui, "Linjelengde (f.eks. 5 cm)", "5 cm")
+        extrude_height_expr = _prompt_for_value(ui, "Ekstruderingshøyde (f.eks. 2 cm)", "2 cm")
+
+        _create_line_and_extrude(design, line_len_expr, extrude_height_expr)
+
+        ui.messageBox("Ekstrudert linje er opprettet.")
+    except RuntimeError as run_error:
+        if ui:
+            ui.messageBox(f"Kjøringsfeil: {run_error}")
+        else:
+            print(f"Kjøringsfeil: {run_error}")
+    except Exception:
+        error_text = traceback.format_exc()
+        if ui:
+            ui.messageBox(f"Uventet feil:\n{error_text}")
+        else:
+            print(error_text)
+
+
+def stop(context: str) -> None:
+    print(f"Stopper skript :: {_COMPLIANCE_BANNER}")
