@@ -146,30 +146,31 @@ def register_user_parameters(
     user_params = design.userParameters
     registered: Dict[str, adsk.fusion.UserParameter] = {}
 
-    def add_param(name: str, expr: str, comment: str) -> adsk.fusion.UserParameter:
-        value_input = adsk.core.ValueInput.createByString(expr)
+    def add_param(definition: ParameterDef) -> adsk.fusion.UserParameter:
+        expr_with_units = f"{definition.value} {definition.unit}".strip()
+        value_input = adsk.core.ValueInput.createByString(expr_with_units)
         try:
-            existing = user_params.itemByName(name)
+            existing = user_params.itemByName(definition.name)
             if existing:
-                existing.expression = expr
-                existing.comment = comment
-                registered[name] = existing
+                expression_to_apply = expr_with_units
+                if definition.unit and existing.unit:
+                    expression_to_apply = str(definition.value)
+                existing.expression = expression_to_apply
+                existing.comment = definition.comment
+                registered[definition.name] = existing
                 return existing
-            param = user_params.add(name, value_input, "", comment)
-            registered[name] = param
+            param = user_params.add(definition.name, value_input, "", definition.comment)
+            registered[definition.name] = param
             return param
         except Exception:
             if ui:
                 ui.messageBox(
-                    f"Feil ved opprettelse/oppdatering av brukerparameter '{name}' med uttrykk '{expr}'"
+                    f"Feil ved opprettelse/oppdatering av brukerparameter '{definition.name}' med uttrykk '{expr_with_units}'"
                 )
             raise
 
     for definition in PARAMETER_DEFINITIONS:
-        expression = str(definition.value)
-        if definition.unit:
-            expression = f"{expression} {definition.unit}"
-        add_param(definition.name, expression, definition.comment)
+        add_param(definition)
 
     return registered
 
@@ -177,10 +178,13 @@ def register_user_parameters(
 def param_to_unit(
     design: adsk.fusion.Design, param: adsk.fusion.UserParameter, unit: str
 ) -> float:
-    if not param.unit:
-        return param.value
     units_manager = design.unitsManager
-    return units_manager.convert(param.value, param.unit, unit)
+    if unit:
+        try:
+            return units_manager.evaluateExpression(param.expression, unit)
+        except Exception:
+            pass
+    return param.value
 
 
 def compute_geometry_inputs(
@@ -222,8 +226,11 @@ def compute_performance_metrics(
     area_mm2 = math.pi * (geom["id_work"] / 2.0) ** 2
     stroke_volume_cm3 = (area_mm2 * geom["stroke"]) / 1000.0
     cr_target = params["CR_TARGET"].value
-    dead_volume_cm3 = stroke_volume_cm3 / max(cr_target - 1.0, 0.01)
-    cr_estimate = (stroke_volume_cm3 + dead_volume_cm3) / dead_volume_cm3
+    dead_volume_cm3 = 0.0
+    if stroke_volume_cm3 > 0:
+        dead_volume_cm3 = stroke_volume_cm3 / max(cr_target - 1.0, 0.01)
+    safe_dead_volume = max(dead_volume_cm3, 1e-9)
+    cr_estimate = (stroke_volume_cm3 + safe_dead_volume) / safe_dead_volume
     return {
         "area_mm2": area_mm2,
         "stroke_volume_cm3": stroke_volume_cm3,
