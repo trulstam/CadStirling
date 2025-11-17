@@ -136,15 +136,20 @@ def register_user_parameters(
     registered: Dict[str, adsk.fusion.UserParameter] = {}
     for definition in PARAMETER_DEFINITIONS:
         param = user_params.itemByName(definition.name)
-        expression = (
-            f"{definition.value} {definition.unit}" if definition.unit else str(definition.value)
-        )
+        expression = str(definition.value)
+        if definition.unit:
+            expression = f"{expression} {definition.unit}"
         if param:
             param.expression = expression
             param.comment = definition.comment
         else:
-            value_input = adsk.core.ValueInput.createByReal(definition.value)
-            param = user_params.add(definition.name, value_input, definition.unit, definition.comment)
+            # Bruk strengeuttrykk for alle parametere. Dette samsvarer med
+            # syntaksen som vises i Fusion-grensesnittet og unngår problemer der
+            # enhetsløse parametere ikke kan opprettes med `createByReal`.
+            value_input = adsk.core.ValueInput.createByString(expression)
+            param = user_params.add(
+                definition.name, value_input, definition.unit, definition.comment
+            )
         registered[definition.name] = param
     return registered
 
