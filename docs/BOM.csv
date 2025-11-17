@@ -1,0 +1,12 @@
+ID: codex_fusionapi_v1.1
+Pos,Delnavn,Antall,Materiale,Emnedim (rå),Prosess,Toleranse,Overflate,Merknad
+1,Ramme/bunnplate,1,Al 6061,"260×160×12 mm","CNC fres/borr",IT8,Anodisert,"Bærende struktur og lagerfester"
+2,Arbeidssylinder,1,Kvartsglass,"Ø70/Ø63×20 mm",Slip/polering,IT7,Polert,"Tetning for arbeidssone"
+3,Fortrengersylinder,1,Kvartsglass,"Ø70/Ø63×20 mm",Slip/polering,IT7,Polert,"90°-montering mot ramme"
+4,Arbeidsstempel,1,Al 6061,"Ø62.6×15 mm",Dreiing,IT6,Honed,"O-ring eller grafittpakning"
+5,Fortrenger,1,Karbon/lettmetall,"Ø62.6×20 mm",Tynnveggdreid,IT7,Mat,"Lav masse + glassfiberfyll"
+6,Veivaksel,1,42CrMo4,"Ø8×220 mm","Drei/Slip",IT6,Slip,"Integrert veivskive"
+7,Koblingsstenger,2,Messing,"Ø6×70 mm","Fres/Drei",IT7,Polert,"Bronsebuss i hver ende"
+8,Svinghjul,1,Stål,"Ø140×12 mm","Drei/balanser",IT7,Satin,"Balansert til <1 gmm"
+9,Varme/kjølemodul,1,Cu/Al,"Lamellplate Ø80 mm","Fres/Lodd",IT9,Børstet,"Varmekollektor + ribber"
+10,Festeskruer,8,A2-70,"M5×20 mm",Kjøp,"ISO 4762",Oljefri,"Trekkmoment 4.5 Nm"
