@@ -147,6 +147,14 @@ def register_user_parameters(
     units_manager = design.unitsManager
     registered: Dict[str, adsk.fusion.UserParameter] = {}
 
+    def is_supported_unit(unit: str) -> bool:
+        if not unit:
+            return False
+        try:
+            return bool(units_manager.isValidUnit(unit))
+        except Exception:
+            return False
+
     def add_param(
         name: str, expr: str, unit: str, comment: str
     ) -> adsk.fusion.UserParameter:
@@ -154,21 +162,31 @@ def register_user_parameters(
             existing = user_params.itemByName(name)
             if existing:
                 target_unit = existing.unit or unit or ""
-                if target_unit:
-                    new_value = units_manager.evaluateExpression(expr, target_unit)
-                else:
+                new_value = None
+                if target_unit and is_supported_unit(target_unit):
+                    try:
+                        new_value = units_manager.evaluateExpression(expr, target_unit)
+                    except Exception:
+                        new_value = None
+                elif not target_unit:
                     try:
                         new_value = float(expr)
                     except ValueError:
-                        new_value = units_manager.evaluateExpression(
-                            expr, units_manager.defaultLengthUnits
-                        )
-                existing.value = new_value
+                        try:
+                            new_value = units_manager.evaluateExpression(
+                                expr, units_manager.defaultLengthUnits
+                            )
+                        except Exception:
+                            new_value = None
+                if new_value is not None:
+                    existing.value = new_value
+                else:
+                    existing.expression = expr
                 existing.comment = comment
                 registered[name] = existing
                 return existing
             units_argument = unit if unit else ""
-            if units_argument:
+            if units_argument and is_supported_unit(units_argument):
                 try:
                     numeric_value = units_manager.evaluateExpression(expr, units_argument)
                 except Exception:
@@ -178,6 +196,7 @@ def register_user_parameters(
                     value_input = adsk.core.ValueInput.createByReal(numeric_value)
             else:
                 value_input = adsk.core.ValueInput.createByString(expr)
+                units_argument = ""
             param = user_params.add(name, value_input, units_argument, comment)
             registered[name] = param
             return param
@@ -397,8 +416,17 @@ def create_threaded_mounts(
     profiles = sketch.profiles
     extrudes = comp.features.extrudeFeatures
     faces_to_thread: List[adsk.core.Face] = []
+    max_hole_area = math.pi * (mm_to_cm(4.0) ** 2)
     for i in range(profiles.count):
         profile = profiles.item(i)
+        try:
+            area_props = profile.areaProperties(
+                adsk.fusion.CalculationAccuracy.MediumCalculationAccuracy
+            )
+            if area_props.area > max_hole_area:
+                continue
+        except Exception:
+            pass
         ext_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.CutFeatureOperation)
         ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(mm_to_cm(geom["base_thick"])))
         # Extruderingen skjer på toppflaten av bunnplaten. Standardretningen peker
@@ -406,6 +434,7 @@ def create_threaded_mounts(
         # kaster en "No target body"-feil. Ved å eksplisitt angi negativ
         # retning sørger vi for at kuttet går ned i platen.
         ext_input.isDirectionNegative = True
+        ext_input.participantBodies = [base_body]
         cut = extrudes.add(ext_input)
         for face in base_body.faces:
             if face.surfaceType == adsk.core.SurfaceTypes.CylinderSurfaceType:
