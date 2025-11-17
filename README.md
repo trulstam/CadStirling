@@ -11,7 +11,7 @@ Utforske og utvikle generative, parametriske modeller i Autodesk Fusion 360 via 
 
 
 ## Hurtigstart
-1) Installer Fusion 360. 2) Åpne *Scripts and Add-ins* → **Scripts** → **+** → velg `scripts/example_line_extrude.py`. 3) Kjør.
+1) Installer Fusion 360. 2) Åpne *Scripts and Add-ins* → **Scripts** → **+** → velg `scripts/example_line_extrude.py`. 3) Kjør. 4) Når dialogen dukker opp, skriv ønsket linjelengde og ekstruderingshøyde (f.eks. `5 cm` og `2 cm`).
 
 
 ## Kildereferanser
