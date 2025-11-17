@@ -1,4 +1,4 @@
-# ID: codex_fusionapi_v1.0
+# ID: codex_fusionapi_v1.1
 
 """Eksempel: tegner en linje og ekstruderer profilen i Fusion 360.
 
@@ -14,7 +14,7 @@ import adsk.core
 import adsk.fusion
 import traceback
 
-_COMPLIANCE_BANNER = "COMPLIANCE BANNER :: ID codex_fusionapi_v1.0 :: example_line_extrude"
+_COMPLIANCE_BANNER = "COMPLIANCE BANNER :: ID codex_fusionapi_v1.1 :: example_line_extrude"
 _handlers = []  # Holder referanser dersom vi utvider med hendelser senere.
 
 

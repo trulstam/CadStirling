@@ -3,13 +3,13 @@
 Denne filen samler minimumsstegene som må kjøres i Fusion 360, sjekkpunkter for API-endringer og forslag til enhetstester basert på mock-objekter.
 
 ## Manuelle teststeg
-1. **Synkroniser skript:** Kopier `scripts/example_line_extrude.py` til den lokale Fusion-skriptmappen (`%APPDATA%/Autodesk/Autodesk Fusion 360/API/Scripts` på Windows eller `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/Scripts` på macOS).
+1. **Synkroniser skript:** Kopier `scripts/examples/example_line_extrude.py` til den lokale Fusion-skriptmappen (`%APPDATA%/Autodesk/Autodesk Fusion 360/API/Scripts` på Windows eller `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/Scripts` på macOS).
 2. **Start Fusion 360** og åpne *Scripts and Add-ins* → fanen **Scripts**.
 3. **Kjør skriptet** `example_line_extrude`.
 4. **Dialogverdi 1:** Angi linjelengde (f.eks. `5 cm`).
 5. **Dialogverdi 2:** Angi ekstruderingshøyde (f.eks. `2 cm`).
 6. **Forventet resultat:**
-   - I Fusion-konsollen vises `COMPLIANCE BANNER :: ID codex_fusionapi_v1.0 :: example_line_extrude`.
+   - I Fusion-konsollen vises `COMPLIANCE BANNER :: ID codex_fusionapi_v1.1 :: example_line_extrude`.
    - En linje tegnes i XY-planet og ekstruderes til et solid med høyden angitt i dialogen.
    - Endringene kan ses og gjentas i *Timeline*. Justering av de to parameterne skal regenerere modellen.
 7. **Feilhåndtering:** Avbryt dialogen for å bekrefte at skriptet viser `Kjøringsfeil: Brukeren avbrøt parameterdialogen.` i en melding eller i konsollen.
@@ -27,7 +27,7 @@ Denne filen samler minimumsstegene som må kjøres i Fusion 360, sjekkpunkter fo
 
 ## Enhetstesting via mocking av `adsk`
 Selv om Fusion API vanligvis krever å kjøre inne i Fusion 360, kan man teste logisk kode ved å mocke nødvendige objekter:
-- **Testkandidater:** `_ensure_design`, `_prompt_for_value` og `_create_line_and_extrude` fra `scripts/example_line_extrude.py` fordi de opererer på kjente API-metoder og har deterministisk logikk.
+- **Testkandidater:** `_ensure_design`, `_prompt_for_value` og `_create_line_and_extrude` fra `scripts/examples/example_line_extrude.py` fordi de opererer på kjente API-metoder og har deterministisk logikk.
 - **Teknikk:** Lag mock-klasser som implementerer minimumet av attributter/metoder (f.eks. `app.documents.add`, `design.rootComponent`, `root.sketches.add`). Python-biblioteket `unittest.mock` kan brukes til å erstatte `adsk`-objekter.
 - **Grense:** Geometrisk resultat (faktisk modell) kan ikke verifiseres uten Fusion, men funksjonskall og parametere kan verifiseres via mocks (f.eks. at `_create_line_and_extrude` kaller `extrudes.add` med riktig `ValueInput`).
 - **Anbefalt struktur:** Opprett `codex/tests/test_example_line_extrude.py` (ny katalog) og injiser mockede `app`, `ui` og `design`-objekter. Sikre at alle tester importeres uten at Fusion er installert.
