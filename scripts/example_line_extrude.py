@@ -1,4 +1,5 @@
 # ID: codex_fusionapi_v1.0
+
 """Eksempel: tegner en linje og ekstruderer profilen i Fusion 360.
 
 Skriptet viser hvordan man bruker Fusion 360 APIet til å:
