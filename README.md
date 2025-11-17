@@ -1,8 +1,8 @@
-ID: codex_fusionapi_v1.0
+ID: codex_fusionapi_v1.1
 # Codex×Fusion360 — Generativ mekanikk & designskripting
 
 
-**Status:** v1.0 • **ID-regel:** Alle prompter/kode må inneholde en ID-tag (f.eks. `codex_fusionapi_v1.0`).
+**Status:** v1.1 • **ID-regel:** Alle prompter/kode må inneholde en ID-tag (f.eks. `codex_fusionapi_v1.1`).
 
 
 ## Formål
@@ -16,7 +16,7 @@ Utforske og utvikle generative, parametriske modeller i Autodesk Fusion 360 via 
    git clone https://github.com/<din-org>/CadStirling.git
    cd CadStirling
    ```
-2. Bekreft at `ID: codex_fusionapi_v1.0` står i første linje av all kommunikasjon (issues, commits, PRer) og i toppen av alle kodefiler.
+2. Bekreft at `ID: codex_fusionapi_v1.1` står i første linje av all kommunikasjon (issues, commits, PRer) og i toppen av alle kodefiler.
 3. Kjør `git status` før nye endringer og sørg for at commit-meldingens første linje starter med ID-en.
 
 ## Plassering av skriptkatalog
@@ -26,10 +26,20 @@ Utforske og utvikle generative, parametriske modeller i Autodesk Fusion 360 via 
 Kopier (eller symlink) `scripts/`-mappen hit slik at Fusion 360 finner skriptene automatisk. Hvert skript får egen undermappe i Fusion-dialogen.
 
 ## Hurtigstart
-1) Installer Fusion 360. 2) Åpne *Scripts and Add-ins* → **Scripts** → **+** → velg `scripts/example_line_extrude.py` (fra katalogen over). 3) Kjør. 4) Når dialogen dukker opp, skriv ønsket linjelengde og ekstruderingshøyde (f.eks. `5 cm` og `2 cm`).
+1) Installer Fusion 360. 2) Åpne *Scripts and Add-ins* → **Scripts** → **+** → velg `scripts/examples/example_line_extrude.py` (fra katalogen over). 3) Kjør. 4) Når dialogen dukker opp, skriv ønsket linjelengde og ekstruderingshøyde (f.eks. `5 cm` og `2 cm`).
+
+- `scripts/examples/` inneholder fungerende eksempler – `example_line_extrude.py` er første verifiserte skript.
+- `scripts/shared/` er stedet for felles biblioteksfunksjoner (parametre, helpers, logging osv.).
+- `scripts/stirling_core/` og `scripts/knife_gd66_carver/` rommer henholdsvis Stirlingmotor- og knivdesign, med egne entry-skript (se under).
+
+## Designstruktur for skript
+- Hver designfamilie har en egen mappe under `scripts/` (f.eks. `scripts/stirling_core/`).
+- Hver mappe har ett tydelig entry-point (`main_*_addin.py`) som Fusion 360 peker til fra Scripts/Add-ins.
+- Delte moduler legges i `scripts/shared/` og importeres fra designmappene ved behov.
+- Nye design skal følge samme mønster: `scripts/<designnavn>/` med `main_<design>_addin.py` som hovedfil, og eventuelle underkataloger som `parts/` eller `utils/`.
 
 ## Lokalt oppsett og testing
-1. Fra repoet, kopier `scripts/example_line_extrude.py` til Fusion-skriptmappen (over).
+1. Fra repoet, kopier `scripts/examples/example_line_extrude.py` til Fusion-skriptmappen (over).
 2. Start Fusion 360 → *Scripts and Add-ins* → fanen **Scripts**.
 3. Velg `example_line_extrude` og klikk **Run**. Se etter "COMPLIANCE BANNER" i *Text Commands*-panelet for å bekrefte ID-logging.
 4. Justér verdier i dialogen for å teste ulike lengder/høyder. Bruk Fusion sin *Timeline* for å verifisere at geometrien oppdateres.
@@ -49,7 +59,7 @@ Kopier (eller symlink) `scripts/`-mappen hit slik at Fusion 360 finner skriptene
 - **Prompt/Issue/PR:** må ha `ID: codex_fusionapi_vX.Y` i første linje.
 - **Kodefiler:** må ha `# ID: codex_fusionapi_vX.Y` i topp-kommentar.
 - **Console-logg:** skriv et "COMPLIANCE BANNER" med ID ved kjøring.
-- **Commits:** første linje i hver commit-melding må starte med ID-en for å dokumentere sporbarhet (f.eks. `ID: codex_fusionapi_v1.0 – oppdater README`).
+- **Commits:** første linje i hver commit-melding må starte med ID-en for å dokumentere sporbarhet (f.eks. `ID: codex_fusionapi_v1.1 – oppdater README`).
 - **Kjøring:** `_COMPLIANCE_BANNER`-strengen i skriptene logges automatisk i Fusion-konsollen.
 
 ## Kjente feilkilder
