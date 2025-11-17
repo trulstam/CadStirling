@@ -376,6 +376,11 @@ def create_threaded_mounts(
         profile = profiles.item(i)
         ext_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.CutFeatureOperation)
         ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(mm_to_cm(geom["base_thick"])))
+        # Extruderingen skjer på toppflaten av bunnplaten. Standardretningen peker
+        # bort fra kroppen, noe som gjør at Fusion ikke finner noe å kutte og
+        # kaster en "No target body"-feil. Ved å eksplisitt angi negativ
+        # retning sørger vi for at kuttet går ned i platen.
+        ext_input.isDirectionNegative = True
         cut = extrudes.add(ext_input)
         for face in base_body.faces:
             if face.surfaceType == adsk.core.SurfaceTypes.CylinderSurfaceType:
