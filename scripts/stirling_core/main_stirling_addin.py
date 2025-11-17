@@ -1,4 +1,4 @@
-# ID: codex_fusionapi_v1.1
+# ID: codex_fusionapi_v1.7
 """Parametrisk Stirlingmotor-generator for Autodesk Fusion 360."""
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import adsk.core
 import adsk.fusion
 import traceback
 
-ID_TAG = "codex_fusionapi_v1.1"
+ID_TAG = "codex_fusionapi_v1.7"
 _COMPLIANCE_BANNER = f"COMPLIANCE BANNER :: ID {ID_TAG} :: stirling_core"
 _ATTR_GROUP = "stirling_core"
 
@@ -132,14 +132,12 @@ def ensure_directories() -> None:
 def register_user_parameters(
     design: adsk.fusion.Design,
 ) -> Dict[str, adsk.fusion.UserParameter]:
-    """Registrerer alle brukerparametre med strenguttrykk som inkluderer enhet.
+    """Registrerer/oppdaterer brukerparametere med strengeuttrykk med enheter.
 
-    Alle uttrykk som sendes til Fusion inkluderer sine respektive enheter direkte i
-    selve strengen, derfor er `units`-argumentet til ``userParameters.add`` alltid en
-    tom streng. Hjelpefunksjonen ``add_param`` håndterer både opprettelse og
-    oppdatering av kommentartekst; eksisterende parametere beholder brukerens verdi
-    slik at lokale tilpasninger ikke overskrives, men uttrykket for nye parametere
-    blir validert og eventuelle feil rapporteres før de bobler opp.
+    Alle uttrykk inneholder eksplisitt enhet (f.eks. "63 mm"), og
+    ``userParameters.add`` kalles derfor alltid med tom enhetsstreng. Hjelpefunksjonen
+    ``add_param`` sørger for konsistent opprettelse/oppdatering og gir enkel
+    feildiagnostikk.
     """
 
     app = adsk.core.Application.get()
@@ -147,27 +145,32 @@ def register_user_parameters(
     user_params = design.userParameters
     registered: Dict[str, adsk.fusion.UserParameter] = {}
 
-    def add_param(definition: ParameterDef) -> adsk.fusion.UserParameter:
-        expr_with_units = f"{definition.value} {definition.unit}".strip()
-        value_input = adsk.core.ValueInput.createByString(expr_with_units)
+    def add_param(name: str, expr: str, comment: str) -> adsk.fusion.UserParameter:
+        value_input = adsk.core.ValueInput.createByString(expr)
         try:
-            existing = user_params.itemByName(definition.name)
+            existing = user_params.itemByName(name)
             if existing:
-                existing.comment = definition.comment
-                registered[definition.name] = existing
+                existing.expression = expr
+                existing.comment = comment
+                registered[name] = existing
                 return existing
-            param = user_params.add(definition.name, value_input, "", definition.comment)
-            registered[definition.name] = param
+            param = user_params.add(name, value_input, "", comment)
+            registered[name] = param
             return param
         except Exception:
             if ui:
                 ui.messageBox(
-                    f"Feil ved opprettelse/oppdatering av brukerparameter '{definition.name}' med uttrykk '{expr_with_units}'"
+                    f"Feil ved opprettelse/oppdatering av brukerparameter '{name}' med uttrykk '{expr}'"
                 )
             raise
 
     for definition in PARAMETER_DEFINITIONS:
-        add_param(definition)
+        expression = f"{definition.value} {definition.unit}".strip()
+        registered[definition.name] = add_param(
+            definition.name,
+            expression,
+            definition.comment,
+        )
 
     return registered
 
