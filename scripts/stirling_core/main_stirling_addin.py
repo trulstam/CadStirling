@@ -146,21 +146,28 @@ def register_user_parameters(
     units_manager = design.unitsManager
     registered: Dict[str, adsk.fusion.UserParameter] = {}
 
-    def add_param(name: str, expr: str, comment: str) -> adsk.fusion.UserParameter:
+    def add_param(
+        name: str, expr: str, unit: str, comment: str
+    ) -> adsk.fusion.UserParameter:
         value_input = adsk.core.ValueInput.createByString(expr)
         try:
             existing = user_params.itemByName(name)
             if existing:
-                target_unit = existing.unit or ""
+                target_unit = existing.unit or unit or ""
                 if target_unit:
                     new_value = units_manager.evaluateExpression(expr, target_unit)
                 else:
-                    new_value = float(expr)
+                    try:
+                        new_value = float(expr)
+                    except ValueError:
+                        new_value = units_manager.evaluateExpression(
+                            expr, units_manager.defaultLengthUnits
+                        )
                 existing.value = new_value
                 existing.comment = comment
                 registered[name] = existing
                 return existing
-            param = user_params.add(name, value_input, "", comment)
+            param = user_params.add(name, value_input, unit or "", comment)
             registered[name] = param
             return param
         except Exception:
@@ -175,6 +182,7 @@ def register_user_parameters(
         registered[definition.name] = add_param(
             definition.name,
             expression,
+            definition.unit,
             definition.comment,
         )
 
