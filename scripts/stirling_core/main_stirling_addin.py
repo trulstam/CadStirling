@@ -136,9 +136,10 @@ def register_user_parameters(
 
     Alle uttrykk som sendes til Fusion inkluderer sine respektive enheter direkte i
     selve strengen, derfor er `units`-argumentet til ``userParameters.add`` alltid en
-    tom streng. Hjelpefunksjonen ``add_param`` sørger for både opprettelse og
-    oppdatering av parametere, og rapporterer hvilken parameter som feilet dersom
-    Fusion avviser uttrykket.
+    tom streng. Hjelpefunksjonen ``add_param`` håndterer både opprettelse og
+    oppdatering av kommentartekst; eksisterende parametere beholder brukerens verdi
+    slik at lokale tilpasninger ikke overskrives, men uttrykket for nye parametere
+    blir validert og eventuelle feil rapporteres før de bobler opp.
     """
 
     app = adsk.core.Application.get()
@@ -152,10 +153,6 @@ def register_user_parameters(
         try:
             existing = user_params.itemByName(definition.name)
             if existing:
-                expression_to_apply = expr_with_units
-                if definition.unit and existing.unit:
-                    expression_to_apply = str(definition.value)
-                existing.expression = expression_to_apply
                 existing.comment = definition.comment
                 registered[definition.name] = existing
                 return existing
