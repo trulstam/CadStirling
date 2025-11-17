@@ -132,80 +132,59 @@ def ensure_directories() -> None:
 def register_user_parameters(
     design: adsk.fusion.Design,
 ) -> Dict[str, adsk.fusion.UserParameter]:
+    """Registrerer alle brukerparametre med strenguttrykk som inkluderer enhet.
+
+    Alle uttrykk som sendes til Fusion inkluderer sine respektive enheter direkte i
+    selve strengen, derfor er `units`-argumentet til ``userParameters.add`` alltid en
+    tom streng. Hjelpefunksjonen ``add_param`` sørger for både opprettelse og
+    oppdatering av parametere, og rapporterer hvilken parameter som feilet dersom
+    Fusion avviser uttrykket.
+    """
+
+    app = adsk.core.Application.get()
+    ui = app.userInterface if app else None
     user_params = design.userParameters
     registered: Dict[str, adsk.fusion.UserParameter] = {}
-    for definition in PARAMETER_DEFINITIONS:
-        param = user_params.itemByName(definition.name)
-        expression = str(definition.value)
-        if definition.unit:
-            expression = f"{expression} {definition.unit}"
-        if param:
-            try:
-                param.expression = expression
-            except RuntimeError as exc:
-                # Fusion kan avvise gyldige uttrykk for enhetsløse parametere.
-                if "Invalid expression" not in str(exc):
-                    raise
-                param.value = definition.value
-            param.comment = definition.comment
-        else:
-            param = _add_parameter_with_fallback(user_params, definition, expression)
-        registered[definition.name] = param
-    return registered
 
-
-def _add_parameter_with_fallback(
-    user_params: adsk.fusion.UserParameters,
-    definition: ParameterDef,
-    primary_expression: str,
-) -> adsk.fusion.UserParameter:
-    """Prøver flere strategier for å unngå "Invalid expression"-feil."""
-
-    def _try_builders(*builders):
-        for builder in builders:
-            try:
-                value_input = builder()
-                return user_params.add(
-                    definition.name,
-                    value_input,
-                    definition.unit,
-                    definition.comment,
+    def add_param(definition: ParameterDef) -> adsk.fusion.UserParameter:
+        expr_with_units = f"{definition.value} {definition.unit}".strip()
+        value_input = adsk.core.ValueInput.createByString(expr_with_units)
+        try:
+            existing = user_params.itemByName(definition.name)
+            if existing:
+                expression_to_apply = expr_with_units
+                if definition.unit and existing.unit:
+                    expression_to_apply = str(definition.value)
+                existing.expression = expression_to_apply
+                existing.comment = definition.comment
+                registered[definition.name] = existing
+                return existing
+            param = user_params.add(definition.name, value_input, "", definition.comment)
+            registered[definition.name] = param
+            return param
+        except Exception:
+            if ui:
+                ui.messageBox(
+                    f"Feil ved opprettelse/oppdatering av brukerparameter '{definition.name}' med uttrykk '{expr_with_units}'"
                 )
-            except RuntimeError as exc:
-                if "Invalid expression" not in str(exc):
-                    raise
-        return None
+            raise
 
-    if definition.unit:
-        # Bruk reelle verdier først slik at Fusion kan bruke `units`-argumentet til å
-        # avgjøre typen, men fall tilbake til strengrepresentasjoner hvis nødvendig.
-        param = _try_builders(
-            lambda: adsk.core.ValueInput.createByReal(definition.value),
-            lambda: adsk.core.ValueInput.createByString(str(definition.value)),
-            lambda: adsk.core.ValueInput.createByString(primary_expression),
-        )
-    else:
-        # Enhetsløse parametere støttes best av strenguttrykk.
-        param = _try_builders(
-            lambda: adsk.core.ValueInput.createByString(str(definition.value)),
-            lambda: adsk.core.ValueInput.createByReal(definition.value),
-        )
+    for definition in PARAMETER_DEFINITIONS:
+        add_param(definition)
 
-    if param:
-        return param
-
-    raise BuilderError(
-        f"Klarte ikke å registrere parameter '{definition.name}' uten 'Invalid expression'."
-    )
+    return registered
 
 
 def param_to_unit(
     design: adsk.fusion.Design, param: adsk.fusion.UserParameter, unit: str
 ) -> float:
-    if not param.unit:
-        return param.value
     units_manager = design.unitsManager
-    return units_manager.convert(param.value, param.unit, unit)
+    if unit:
+        try:
+            return units_manager.evaluateExpression(param.expression, unit)
+        except Exception:
+            pass
+    return param.value
 
 
 def compute_geometry_inputs(
@@ -247,8 +226,11 @@ def compute_performance_metrics(
     area_mm2 = math.pi * (geom["id_work"] / 2.0) ** 2
     stroke_volume_cm3 = (area_mm2 * geom["stroke"]) / 1000.0
     cr_target = params["CR_TARGET"].value
-    dead_volume_cm3 = stroke_volume_cm3 / max(cr_target - 1.0, 0.01)
-    cr_estimate = (stroke_volume_cm3 + dead_volume_cm3) / dead_volume_cm3
+    dead_volume_cm3 = 0.0
+    if stroke_volume_cm3 > 0:
+        dead_volume_cm3 = stroke_volume_cm3 / max(cr_target - 1.0, 0.01)
+    safe_dead_volume = max(dead_volume_cm3, 1e-9)
+    cr_estimate = (stroke_volume_cm3 + safe_dead_volume) / safe_dead_volume
     return {
         "area_mm2": area_mm2,
         "stroke_volume_cm3": stroke_volume_cm3,
@@ -851,4 +833,5 @@ def summarize(
 
 
 def mm_to_cm(value_mm: float) -> float:
+    """Konverterer mm til cm (Fusion sine interne lengdeenheter er cm)."""
     return value_mm / 10.0
