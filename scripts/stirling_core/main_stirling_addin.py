@@ -136,17 +136,55 @@ def register_user_parameters(
     registered: Dict[str, adsk.fusion.UserParameter] = {}
     for definition in PARAMETER_DEFINITIONS:
         param = user_params.itemByName(definition.name)
-        expression = (
-            f"{definition.value} {definition.unit}" if definition.unit else str(definition.value)
-        )
+        expression = str(definition.value)
+        if definition.unit:
+            expression = f"{expression} {definition.unit}"
         if param:
-            param.expression = expression
+            try:
+                param.expression = expression
+            except RuntimeError as exc:
+                # Fusion kan avvise gyldige uttrykk for enhetsløse parametere.
+                if "Invalid expression" not in str(exc):
+                    raise
+                param.value = definition.value
             param.comment = definition.comment
         else:
-            value_input = adsk.core.ValueInput.createByReal(definition.value)
-            param = user_params.add(definition.name, value_input, definition.unit, definition.comment)
+            param = _add_parameter_with_fallback(user_params, definition, expression)
         registered[definition.name] = param
     return registered
+
+
+def _add_parameter_with_fallback(
+    user_params: adsk.fusion.UserParameters,
+    definition: ParameterDef,
+    primary_expression: str,
+) -> adsk.fusion.UserParameter:
+    """Prøver flere strategier for å unngå "Invalid expression"-feil."""
+
+    attempts = [primary_expression]
+    if definition.unit:
+        # Prøv også å bruke verdien alene og la `units`-argumentet definere typen.
+        attempts.append(str(definition.value))
+    for expression in attempts:
+        try:
+            value_input = adsk.core.ValueInput.createByString(expression)
+            return user_params.add(
+                definition.name,
+                value_input,
+                definition.unit,
+                definition.comment,
+            )
+        except RuntimeError as exc:
+            if "Invalid expression" not in str(exc):
+                raise
+    # Siste utvei: bruk en ren reell verdi.
+    value_input = adsk.core.ValueInput.createByReal(definition.value)
+    return user_params.add(
+        definition.name,
+        value_input,
+        definition.unit,
+        definition.comment,
+    )
 
 
 def param_to_unit(
