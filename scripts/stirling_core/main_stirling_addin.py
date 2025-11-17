@@ -132,71 +132,46 @@ def ensure_directories() -> None:
 def register_user_parameters(
     design: adsk.fusion.Design,
 ) -> Dict[str, adsk.fusion.UserParameter]:
+    """Registrerer alle brukerparametre med strenguttrykk som inkluderer enhet.
+
+    Alle uttrykk som sendes til Fusion inkluderer sine respektive enheter direkte i
+    selve strengen, derfor er `units`-argumentet til ``userParameters.add`` alltid en
+    tom streng. Hjelpefunksjonen ``add_param`` sørger for både opprettelse og
+    oppdatering av parametere, og rapporterer hvilken parameter som feilet dersom
+    Fusion avviser uttrykket.
+    """
+
+    app = adsk.core.Application.get()
+    ui = app.userInterface if app else None
     user_params = design.userParameters
     registered: Dict[str, adsk.fusion.UserParameter] = {}
+
+    def add_param(name: str, expr: str, comment: str) -> adsk.fusion.UserParameter:
+        value_input = adsk.core.ValueInput.createByString(expr)
+        try:
+            existing = user_params.itemByName(name)
+            if existing:
+                existing.expression = expr
+                existing.comment = comment
+                registered[name] = existing
+                return existing
+            param = user_params.add(name, value_input, "", comment)
+            registered[name] = param
+            return param
+        except Exception:
+            if ui:
+                ui.messageBox(
+                    f"Feil ved opprettelse/oppdatering av brukerparameter '{name}' med uttrykk '{expr}'"
+                )
+            raise
+
     for definition in PARAMETER_DEFINITIONS:
-        param = user_params.itemByName(definition.name)
         expression = str(definition.value)
         if definition.unit:
             expression = f"{expression} {definition.unit}"
-        if param:
-            try:
-                param.expression = expression
-            except RuntimeError as exc:
-                # Fusion kan avvise gyldige uttrykk for enhetsløse parametere.
-                if "Invalid expression" not in str(exc):
-                    raise
-                param.value = definition.value
-            param.comment = definition.comment
-        else:
-            param = _add_parameter_with_fallback(user_params, definition, expression)
-        registered[definition.name] = param
+        add_param(definition.name, expression, definition.comment)
+
     return registered
-
-
-def _add_parameter_with_fallback(
-    user_params: adsk.fusion.UserParameters,
-    definition: ParameterDef,
-    primary_expression: str,
-) -> adsk.fusion.UserParameter:
-    """Prøver flere strategier for å unngå "Invalid expression"-feil."""
-
-    def _try_builders(*builders):
-        for builder in builders:
-            try:
-                value_input = builder()
-                return user_params.add(
-                    definition.name,
-                    value_input,
-                    definition.unit,
-                    definition.comment,
-                )
-            except RuntimeError as exc:
-                if "Invalid expression" not in str(exc):
-                    raise
-        return None
-
-    if definition.unit:
-        # Bruk reelle verdier først slik at Fusion kan bruke `units`-argumentet til å
-        # avgjøre typen, men fall tilbake til strengrepresentasjoner hvis nødvendig.
-        param = _try_builders(
-            lambda: adsk.core.ValueInput.createByReal(definition.value),
-            lambda: adsk.core.ValueInput.createByString(str(definition.value)),
-            lambda: adsk.core.ValueInput.createByString(primary_expression),
-        )
-    else:
-        # Enhetsløse parametere støttes best av strenguttrykk.
-        param = _try_builders(
-            lambda: adsk.core.ValueInput.createByString(str(definition.value)),
-            lambda: adsk.core.ValueInput.createByReal(definition.value),
-        )
-
-    if param:
-        return param
-
-    raise BuilderError(
-        f"Klarte ikke å registrere parameter '{definition.name}' uten 'Invalid expression'."
-    )
 
 
 def param_to_unit(
@@ -851,4 +826,5 @@ def summarize(
 
 
 def mm_to_cm(value_mm: float) -> float:
+    """Konverterer mm til cm (Fusion sine interne lengdeenheter er cm)."""
     return value_mm / 10.0
