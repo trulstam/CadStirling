@@ -143,6 +143,7 @@ def register_user_parameters(
     app = adsk.core.Application.get()
     ui = app.userInterface if app else None
     user_params = design.userParameters
+    units_manager = design.unitsManager
     registered: Dict[str, adsk.fusion.UserParameter] = {}
 
     def add_param(name: str, expr: str, comment: str) -> adsk.fusion.UserParameter:
@@ -150,7 +151,12 @@ def register_user_parameters(
         try:
             existing = user_params.itemByName(name)
             if existing:
-                existing.expression = expr
+                target_unit = existing.unit or ""
+                if target_unit:
+                    new_value = units_manager.evaluateExpression(expr, target_unit)
+                else:
+                    new_value = float(expr)
+                existing.value = new_value
                 existing.comment = comment
                 registered[name] = existing
                 return existing
