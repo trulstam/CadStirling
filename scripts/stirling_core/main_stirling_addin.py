@@ -143,8 +143,18 @@ def register_user_parameters(
             param.expression = expression
             param.comment = definition.comment
         else:
-            value_input = adsk.core.ValueInput.createByReal(definition.value)
-            param = user_params.add(definition.name, value_input, definition.unit, definition.comment)
+            if definition.unit:
+                value_input = adsk.core.ValueInput.createByReal(definition.value)
+            else:
+                # Enheter uten fysisk dimensjon (f.eks. kompresjonsforhold) må
+                # registreres ved å uttrykke verdien som en ren streng. Fusion
+                # aksepterer ellers ikke uttrykket og rapporterer "Invalid
+                # expression" når en tom enhet kombineres med en numerisk
+                # ValueInput.
+                value_input = adsk.core.ValueInput.createByString(str(definition.value))
+            param = user_params.add(
+                definition.name, value_input, definition.unit, definition.comment
+            )
         registered[definition.name] = param
     return registered
 
