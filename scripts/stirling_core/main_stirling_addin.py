@@ -143,18 +143,31 @@ def register_user_parameters(
     app = adsk.core.Application.get()
     ui = app.userInterface if app else None
     user_params = design.userParameters
+    units_manager = design.unitsManager
     registered: Dict[str, adsk.fusion.UserParameter] = {}
 
-    def add_param(name: str, expr: str, comment: str) -> adsk.fusion.UserParameter:
+    def add_param(
+        name: str, expr: str, unit: str, comment: str
+    ) -> adsk.fusion.UserParameter:
         value_input = adsk.core.ValueInput.createByString(expr)
         try:
             existing = user_params.itemByName(name)
             if existing:
-                existing.expression = expr
+                target_unit = existing.unit or unit or ""
+                if target_unit:
+                    new_value = units_manager.evaluateExpression(expr, target_unit)
+                else:
+                    try:
+                        new_value = float(expr)
+                    except ValueError:
+                        new_value = units_manager.evaluateExpression(
+                            expr, units_manager.defaultLengthUnits
+                        )
+                existing.value = new_value
                 existing.comment = comment
                 registered[name] = existing
                 return existing
-            param = user_params.add(name, value_input, "", comment)
+            param = user_params.add(name, value_input, unit or "", comment)
             registered[name] = param
             return param
         except Exception:
@@ -169,6 +182,7 @@ def register_user_parameters(
         registered[definition.name] = add_param(
             definition.name,
             expression,
+            definition.unit,
             definition.comment,
         )
 
@@ -376,6 +390,11 @@ def create_threaded_mounts(
         profile = profiles.item(i)
         ext_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.CutFeatureOperation)
         ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(mm_to_cm(geom["base_thick"])))
+        # Extruderingen skjer på toppflaten av bunnplaten. Standardretningen peker
+        # bort fra kroppen, noe som gjør at Fusion ikke finner noe å kutte og
+        # kaster en "No target body"-feil. Ved å eksplisitt angi negativ
+        # retning sørger vi for at kuttet går ned i platen.
+        ext_input.isDirectionNegative = True
         cut = extrudes.add(ext_input)
         for face in base_body.faces:
             if face.surfaceType == adsk.core.SurfaceTypes.CylinderSurfaceType:
