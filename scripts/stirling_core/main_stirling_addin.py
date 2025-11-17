@@ -134,27 +134,70 @@ def register_user_parameters(
 ) -> Dict[str, adsk.fusion.UserParameter]:
     """Registrerer/oppdaterer brukerparametere med strengeuttrykk med enheter.
 
-    Alle uttrykk inneholder eksplisitt enhet (f.eks. "63 mm"), og
-    ``userParameters.add`` kalles derfor alltid med tom enhetsstreng. Hjelpefunksjonen
-    ``add_param`` sørger for konsistent opprettelse/oppdatering og gir enkel
-    feildiagnostikk.
+    Alle uttrykk inneholder eksplisitt enhet (f.eks. "63 mm"), men ``add_param``
+    forsøker også å lagre enhetsmetadata ved å evaluere uttrykket inn i målenheten
+    før parameteren opprettes. Hvis Fusion ikke støtter enheten for ``add``, faller
+    funksjonen tilbake til den gamle oppførselen med å sende inn uttrykket som er,
+    slik at feildiagnostikk fortsatt er mulig.
     """
 
     app = adsk.core.Application.get()
     ui = app.userInterface if app else None
     user_params = design.userParameters
+    units_manager = design.unitsManager
     registered: Dict[str, adsk.fusion.UserParameter] = {}
 
-    def add_param(name: str, expr: str, comment: str) -> adsk.fusion.UserParameter:
-        value_input = adsk.core.ValueInput.createByString(expr)
+    def is_supported_unit(unit: str) -> bool:
+        if not unit:
+            return False
+        try:
+            return bool(units_manager.isValidUnit(unit))
+        except Exception:
+            return False
+
+    def add_param(
+        name: str, expr: str, unit: str, comment: str
+    ) -> adsk.fusion.UserParameter:
         try:
             existing = user_params.itemByName(name)
             if existing:
-                existing.expression = expr
+                target_unit = existing.unit or unit or ""
+                new_value = None
+                if target_unit and is_supported_unit(target_unit):
+                    try:
+                        new_value = units_manager.evaluateExpression(expr, target_unit)
+                    except Exception:
+                        new_value = None
+                elif not target_unit:
+                    try:
+                        new_value = float(expr)
+                    except ValueError:
+                        try:
+                            new_value = units_manager.evaluateExpression(
+                                expr, units_manager.defaultLengthUnits
+                            )
+                        except Exception:
+                            new_value = None
+                if new_value is not None:
+                    existing.value = new_value
+                else:
+                    existing.expression = expr
                 existing.comment = comment
                 registered[name] = existing
                 return existing
-            param = user_params.add(name, value_input, "", comment)
+            units_argument = unit if unit else ""
+            if units_argument and is_supported_unit(units_argument):
+                try:
+                    numeric_value = units_manager.evaluateExpression(expr, units_argument)
+                except Exception:
+                    value_input = adsk.core.ValueInput.createByString(expr)
+                    units_argument = ""
+                else:
+                    value_input = adsk.core.ValueInput.createByReal(numeric_value)
+            else:
+                value_input = adsk.core.ValueInput.createByString(expr)
+                units_argument = ""
+            param = user_params.add(name, value_input, units_argument, comment)
             registered[name] = param
             return param
         except Exception:
@@ -169,6 +212,7 @@ def register_user_parameters(
         registered[definition.name] = add_param(
             definition.name,
             expression,
+            definition.unit,
             definition.comment,
         )
 
@@ -372,10 +416,25 @@ def create_threaded_mounts(
     profiles = sketch.profiles
     extrudes = comp.features.extrudeFeatures
     faces_to_thread: List[adsk.core.Face] = []
+    max_hole_area = math.pi * (mm_to_cm(4.0) ** 2)
     for i in range(profiles.count):
         profile = profiles.item(i)
+        try:
+            area_props = profile.areaProperties(
+                adsk.fusion.CalculationAccuracy.MediumCalculationAccuracy
+            )
+            if area_props.area > max_hole_area:
+                continue
+        except Exception:
+            pass
         ext_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.CutFeatureOperation)
         ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(mm_to_cm(geom["base_thick"])))
+        # Extruderingen skjer på toppflaten av bunnplaten. Standardretningen peker
+        # bort fra kroppen, noe som gjør at Fusion ikke finner noe å kutte og
+        # kaster en "No target body"-feil. Ved å eksplisitt angi negativ
+        # retning sørger vi for at kuttet går ned i platen.
+        ext_input.isDirectionNegative = True
+        ext_input.participantBodies = [base_body]
         cut = extrudes.add(ext_input)
         for face in base_body.faces:
             if face.surfaceType == adsk.core.SurfaceTypes.CylinderSurfaceType:
