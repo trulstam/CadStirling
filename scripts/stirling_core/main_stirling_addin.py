@@ -826,4 +826,5 @@ def summarize(
 
 
 def mm_to_cm(value_mm: float) -> float:
+    """Konverterer mm til cm (Fusion sine interne lengdeenheter er cm)."""
     return value_mm / 10.0
