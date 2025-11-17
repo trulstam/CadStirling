@@ -134,27 +134,51 @@ def register_user_parameters(
 ) -> Dict[str, adsk.fusion.UserParameter]:
     """Registrerer/oppdaterer brukerparametere med strengeuttrykk med enheter.
 
-    Alle uttrykk inneholder eksplisitt enhet (f.eks. "63 mm"), og
-    ``userParameters.add`` kalles derfor alltid med tom enhetsstreng. Hjelpefunksjonen
-    ``add_param`` sørger for konsistent opprettelse/oppdatering og gir enkel
-    feildiagnostikk.
+    Alle uttrykk inneholder eksplisitt enhet (f.eks. "63 mm"), men ``add_param``
+    forsøker også å lagre enhetsmetadata ved å evaluere uttrykket inn i målenheten
+    før parameteren opprettes. Hvis Fusion ikke støtter enheten for ``add``, faller
+    funksjonen tilbake til den gamle oppførselen med å sende inn uttrykket som er,
+    slik at feildiagnostikk fortsatt er mulig.
     """
 
     app = adsk.core.Application.get()
     ui = app.userInterface if app else None
     user_params = design.userParameters
+    units_manager = design.unitsManager
     registered: Dict[str, adsk.fusion.UserParameter] = {}
 
-    def add_param(name: str, expr: str, comment: str) -> adsk.fusion.UserParameter:
-        value_input = adsk.core.ValueInput.createByString(expr)
+    def add_param(
+        name: str, expr: str, unit: str, comment: str
+    ) -> adsk.fusion.UserParameter:
         try:
             existing = user_params.itemByName(name)
             if existing:
-                existing.expression = expr
+                target_unit = existing.unit or unit or ""
+                if target_unit:
+                    new_value = units_manager.evaluateExpression(expr, target_unit)
+                else:
+                    try:
+                        new_value = float(expr)
+                    except ValueError:
+                        new_value = units_manager.evaluateExpression(
+                            expr, units_manager.defaultLengthUnits
+                        )
+                existing.value = new_value
                 existing.comment = comment
                 registered[name] = existing
                 return existing
-            param = user_params.add(name, value_input, "", comment)
+            units_argument = unit if unit else ""
+            if units_argument:
+                try:
+                    numeric_value = units_manager.evaluateExpression(expr, units_argument)
+                except Exception:
+                    value_input = adsk.core.ValueInput.createByString(expr)
+                    units_argument = ""
+                else:
+                    value_input = adsk.core.ValueInput.createByReal(numeric_value)
+            else:
+                value_input = adsk.core.ValueInput.createByString(expr)
+            param = user_params.add(name, value_input, units_argument, comment)
             registered[name] = param
             return param
         except Exception:
@@ -169,6 +193,7 @@ def register_user_parameters(
         registered[definition.name] = add_param(
             definition.name,
             expression,
+            definition.unit,
             definition.comment,
         )
 
@@ -376,6 +401,11 @@ def create_threaded_mounts(
         profile = profiles.item(i)
         ext_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.CutFeatureOperation)
         ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(mm_to_cm(geom["base_thick"])))
+        # Extruderingen skjer på toppflaten av bunnplaten. Standardretningen peker
+        # bort fra kroppen, noe som gjør at Fusion ikke finner noe å kutte og
+        # kaster en "No target body"-feil. Ved å eksplisitt angi negativ
+        # retning sørger vi for at kuttet går ned i platen.
+        ext_input.isDirectionNegative = True
         cut = extrudes.add(ext_input)
         for face in base_body.faces:
             if face.surfaceType == adsk.core.SurfaceTypes.CylinderSurfaceType:
