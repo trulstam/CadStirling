@@ -134,10 +134,11 @@ def register_user_parameters(
 ) -> Dict[str, adsk.fusion.UserParameter]:
     """Registrerer/oppdaterer brukerparametere med strengeuttrykk med enheter.
 
-    Alle uttrykk inneholder eksplisitt enhet (f.eks. "63 mm"), og
-    ``userParameters.add`` kalles derfor alltid med tom enhetsstreng. Hjelpefunksjonen
-    ``add_param`` sørger for konsistent opprettelse/oppdatering og gir enkel
-    feildiagnostikk.
+    Alle uttrykk inneholder eksplisitt enhet (f.eks. "63 mm"), men ``add_param``
+    forsøker også å lagre enhetsmetadata ved å evaluere uttrykket inn i målenheten
+    før parameteren opprettes. Hvis Fusion ikke støtter enheten for ``add``, faller
+    funksjonen tilbake til den gamle oppførselen med å sende inn uttrykket som er,
+    slik at feildiagnostikk fortsatt er mulig.
     """
 
     app = adsk.core.Application.get()
@@ -149,7 +150,6 @@ def register_user_parameters(
     def add_param(
         name: str, expr: str, unit: str, comment: str
     ) -> adsk.fusion.UserParameter:
-        value_input = adsk.core.ValueInput.createByString(expr)
         try:
             existing = user_params.itemByName(name)
             if existing:
@@ -167,7 +167,18 @@ def register_user_parameters(
                 existing.comment = comment
                 registered[name] = existing
                 return existing
-            param = user_params.add(name, value_input, unit or "", comment)
+            units_argument = unit if unit else ""
+            if units_argument:
+                try:
+                    numeric_value = units_manager.evaluateExpression(expr, units_argument)
+                except Exception:
+                    value_input = adsk.core.ValueInput.createByString(expr)
+                    units_argument = ""
+                else:
+                    value_input = adsk.core.ValueInput.createByReal(numeric_value)
+            else:
+                value_input = adsk.core.ValueInput.createByString(expr)
+            param = user_params.add(name, value_input, units_argument, comment)
             registered[name] = param
             return param
         except Exception:
