@@ -1,10 +1,11 @@
-# ID: codex_fusionapi_v1.1
+# ID: codex_fusionapi_v1.7
 """Stub for GD66-baserte carver-knivens geometri, vil senere generere Fusion 360-modell."""
 import adsk.core
 import adsk.fusion
 import traceback  # noqa: F401  # for fremtidig bruk ved utvidelser
 
-_COMPLIANCE_BANNER = "COMPLIANCE BANNER :: ID codex_fusionapi_v1.1 :: knife_gd66_carver"
+ID_TAG = "codex_fusionapi_v1.7"
+_COMPLIANCE_BANNER = f"COMPLIANCE BANNER :: ID {ID_TAG} :: knife_gd66_carver"
 
 
 def run(context: str) -> None:
