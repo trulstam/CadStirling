@@ -161,29 +161,41 @@ def _add_parameter_with_fallback(
 ) -> adsk.fusion.UserParameter:
     """Prøver flere strategier for å unngå "Invalid expression"-feil."""
 
-    attempts = [primary_expression]
+    def _try_builders(*builders):
+        for builder in builders:
+            try:
+                value_input = builder()
+                return user_params.add(
+                    definition.name,
+                    value_input,
+                    definition.unit,
+                    definition.comment,
+                )
+            except RuntimeError as exc:
+                if "Invalid expression" not in str(exc):
+                    raise
+        return None
+
     if definition.unit:
-        # Prøv også å bruke verdien alene og la `units`-argumentet definere typen.
-        attempts.append(str(definition.value))
-    for expression in attempts:
-        try:
-            value_input = adsk.core.ValueInput.createByString(expression)
-            return user_params.add(
-                definition.name,
-                value_input,
-                definition.unit,
-                definition.comment,
-            )
-        except RuntimeError as exc:
-            if "Invalid expression" not in str(exc):
-                raise
-    # Siste utvei: bruk en ren reell verdi.
-    value_input = adsk.core.ValueInput.createByReal(definition.value)
-    return user_params.add(
-        definition.name,
-        value_input,
-        definition.unit,
-        definition.comment,
+        # Bruk reelle verdier først slik at Fusion kan bruke `units`-argumentet til å
+        # avgjøre typen, men fall tilbake til strengrepresentasjoner hvis nødvendig.
+        param = _try_builders(
+            lambda: adsk.core.ValueInput.createByReal(definition.value),
+            lambda: adsk.core.ValueInput.createByString(str(definition.value)),
+            lambda: adsk.core.ValueInput.createByString(primary_expression),
+        )
+    else:
+        # Enhetsløse parametere støttes best av strenguttrykk.
+        param = _try_builders(
+            lambda: adsk.core.ValueInput.createByString(str(definition.value)),
+            lambda: adsk.core.ValueInput.createByReal(definition.value),
+        )
+
+    if param:
+        return param
+
+    raise BuilderError(
+        f"Klarte ikke å registrere parameter '{definition.name}' uten 'Invalid expression'."
     )
 
 
