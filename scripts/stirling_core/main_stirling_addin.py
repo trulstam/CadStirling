@@ -716,7 +716,19 @@ def build_joints(design: adsk.fusion.Design, records: Dict[str, ComponentRecord]
 
     def _origin_geometry(record: ComponentRecord) -> adsk.fusion.JointGeometry:
         origin_point = record.component.originConstructionPoint
-        return adsk.fusion.JointGeometry.createByPoint(origin_point, record.occurrence)
+        if origin_point is None:
+            raise BuilderError(f"Komponenten '{record.name}' mangler origo-konstruksjonspunkt for joints.")
+        point_geom = origin_point.geometry
+        if point_geom is None:
+            raise BuilderError(f"Kan ikke hente geometri for origo-punktet til '{record.name}'.")
+        world_point = adsk.core.Point3D.create(point_geom.x, point_geom.y, point_geom.z)
+        occ = record.occurrence
+        if occ:
+            try:
+                world_point.transformBy(occ.transform)
+            except Exception:
+                pass
+        return adsk.fusion.JointGeometry.createByPoint(world_point)
 
     frame_geom = _origin_geometry(records["frame"])
 
