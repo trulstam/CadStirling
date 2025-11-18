@@ -718,17 +718,9 @@ def build_joints(design: adsk.fusion.Design, records: Dict[str, ComponentRecord]
         origin_point = record.component.originConstructionPoint
         if origin_point is None:
             raise BuilderError(f"Komponenten '{record.name}' mangler origo-konstruksjonspunkt for joints.")
-        point_geom = origin_point.geometry
-        if point_geom is None:
-            raise BuilderError(f"Kan ikke hente geometri for origo-punktet til '{record.name}'.")
-        world_point = adsk.core.Point3D.create(point_geom.x, point_geom.y, point_geom.z)
-        occ = record.occurrence
-        if occ:
-            try:
-                world_point.transformBy(occ.transform)
-            except Exception:
-                pass
-        return adsk.fusion.JointGeometry.createByPoint(world_point)
+        if not origin_point.isValid:
+            raise BuilderError(f"Origo-punktet til '{record.name}' er ugyldig og kan ikke brukes til joints.")
+        return adsk.fusion.JointGeometry.createByPoint(origin_point)
 
     frame_geom = _origin_geometry(records["frame"])
 
