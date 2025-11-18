@@ -714,37 +714,42 @@ def build_joints(design: adsk.fusion.Design, records: Dict[str, ComponentRecord]
     root = design.rootComponent
     joints = root.joints
 
+    def _origin_geometry(record: ComponentRecord) -> adsk.fusion.JointGeometry:
+        origin_point = record.component.originConstructionPoint
+        return adsk.fusion.JointGeometry.createByPoint(origin_point, record.occurrence)
+
+    frame_geom = _origin_geometry(records["frame"])
+
     # 1) Rigid: lås sylindre og thermal til ramme (står allerede korrekt)
-    def rigid_to_frame(child_occ: adsk.fusion.Occurrence):
-        ji = joints.createInput(child_occ, records["frame"].occurrence)
+    def rigid_to_frame(child_record: ComponentRecord):
+        ji = joints.createInput(_origin_geometry(child_record), frame_geom)
         ji.setAsRigidJointMotion()
         joints.add(ji)
 
-    rigid_to_frame(records["work_cylinder"].occurrence)
-    rigid_to_frame(records["displacer_cylinder"].occurrence)
-    rigid_to_frame(records["thermal"].occurrence)
+    rigid_to_frame(records["work_cylinder"])
+    rigid_to_frame(records["displacer_cylinder"])
+    rigid_to_frame(records["thermal"])
 
     # 2) Revolute: veivaksel i ramme — rotasjonsakse langs verdens X
-    crank_occ = records["crankshaft"].occurrence
-    frame_occ = records["frame"].occurrence
-    ji_crank = joints.createInput(crank_occ, frame_occ)
+    crank_record = records["crankshaft"]
+    ji_crank = joints.createInput(_origin_geometry(crank_record), frame_geom)
     ji_crank.setAsRevoluteJointMotion(adsk.core.Vector3D.create(1, 0, 0))
     joints.add(ji_crank)
 
     # 3) Revolute: svinghjul på veivaksel — koaksial med veivaksel
-    fly_occ = records["flywheel"].occurrence
-    ji_fly = joints.createInput(fly_occ, crank_occ)
+    fly_record = records["flywheel"]
+    ji_fly = joints.createInput(_origin_geometry(fly_record), _origin_geometry(crank_record))
     ji_fly.setAsRevoluteJointMotion(adsk.core.Vector3D.create(1, 0, 0))
     joints.add(ji_fly)
 
     # 4) Slider: stempler langs sylinderaksene
     # Arbeidssylinder vertikal → Z-akse
-    ji_wp = joints.createInput(records["work_piston"].occurrence, records["work_cylinder"].occurrence)
+    ji_wp = joints.createInput(_origin_geometry(records["work_piston"]), _origin_geometry(records["work_cylinder"]))
     ji_wp.setAsSliderJointMotion(adsk.core.Vector3D.create(0, 0, 1))
     joints.add(ji_wp)
 
     # Fortrenger 90° vippet → Y-akse
-    ji_dp = joints.createInput(records["displacer"].occurrence, records["displacer_cylinder"].occurrence)
+    ji_dp = joints.createInput(_origin_geometry(records["displacer"]), _origin_geometry(records["displacer_cylinder"]))
     ji_dp.setAsSliderJointMotion(adsk.core.Vector3D.create(0, 1, 0))
     joints.add(ji_dp)
 
