@@ -437,8 +437,10 @@ def create_threaded_mounts(
         ext_input.participantBodies = [base_body]
         cut = extrudes.add(ext_input)
         for face in base_body.faces:
-            if face.surfaceType == adsk.core.SurfaceTypes.CylinderSurfaceType:
-                radius = face.geometry.radius
+            geometry = face.geometry
+            surface_type = getattr(geometry, "surfaceType", None)
+            if surface_type == adsk.core.SurfaceTypes.CylinderSurfaceType:
+                radius = geometry.radius
                 if math.isclose(radius, mm_to_cm(2.5), rel_tol=0.15):
                     faces_to_thread.append(face)
                     if len(faces_to_thread) == 4:
