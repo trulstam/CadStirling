@@ -132,13 +132,10 @@ def ensure_directories() -> None:
 def register_user_parameters(
     design: adsk.fusion.Design,
 ) -> Dict[str, adsk.fusion.UserParameter]:
-    """Registrerer/oppdaterer brukerparametere med strengeuttrykk med enheter.
+    """Synkroniserer brukerparametre med definerte standarder.
 
-    Alle uttrykk inneholder eksplisitt enhet (f.eks. "63 mm"), men ``add_param``
-    forsøker også å lagre enhetsmetadata ved å evaluere uttrykket inn i målenheten
-    før parameteren opprettes. Hvis Fusion ikke støtter enheten for ``add``, faller
-    funksjonen tilbake til den gamle oppførselen med å sende inn uttrykket som er,
-    slik at feildiagnostikk fortsatt er mulig.
+    Implementasjonen følger ``codex_fusionapi_v1.9``-mønsteret for å være robust
+    mot locale-variasjoner og eksisterende parametre med avvikende enheter.
     """
 
     app = adsk.core.Application.get()
@@ -147,77 +144,72 @@ def register_user_parameters(
     units_manager = design.unitsManager
     registered: Dict[str, adsk.fusion.UserParameter] = {}
 
-    def is_supported_unit(unit: str) -> bool:
-        if not unit:
-            return False
-        try:
-            return bool(units_manager.isValidUnit(unit))
-        except Exception:
-            return False
+    def make_expression(value: float, unit: str) -> str:
+        """Bygger et locale-uavhengig uttrykk, f.eks. '63 mm' eller '1.4'."""
+        if unit:
+            return f"{value:g} {unit}"
+        return f"{value:g}"
 
-    def add_param(
-        name: str, expr: str, unit: str, comment: str
-    ) -> adsk.fusion.UserParameter:
+    def eval_expression(expr: str, target_unit: str, fallback_value: float) -> float:
+        """Evaluerer et uttrykk til numerisk verdi i ønsket enhet, med fallback."""
         try:
-            existing = user_params.itemByName(name)
-            if existing:
-                target_unit = existing.unit or unit or ""
-                new_value = None
-                if target_unit and is_supported_unit(target_unit):
-                    try:
-                        new_value = units_manager.evaluateExpression(expr, target_unit)
-                    except Exception:
-                        new_value = None
-                elif not target_unit:
-                    try:
-                        new_value = float(expr)
-                    except ValueError:
-                        try:
-                            new_value = units_manager.evaluateExpression(
-                                expr, units_manager.defaultLengthUnits
-                            )
-                        except Exception:
-                            new_value = None
-                if new_value is not None:
+            if target_unit:
+                return units_manager.evaluateExpression(expr, target_unit)
+            return units_manager.evaluateExpression(expr, "")
+        except Exception:
+            if ui:
+                ui.messageBox(
+                    "Kunne ikke evaluere uttrykk "
+                    f"'{expr}' til enhet '{target_unit}'. "
+                    f"Bruker fallback-verdi {fallback_value}."
+                )
+            return fallback_value
+
+    def sync_param(defn: ParameterDef) -> adsk.fusion.UserParameter:
+        expr = make_expression(defn.value, defn.unit)
+        existing = user_params.itemByName(defn.name)
+
+        # Oppdater eksisterende parameter
+        if existing:
+            try:
+                target_unit = defn.unit or existing.unit or ""
+                new_value = eval_expression(expr, target_unit, defn.value)
+                if target_unit:
+                    # Sørg for korrekt enhetsmetadata + verdi
+                    existing.unit = target_unit
                     existing.value = new_value
                 else:
-                    existing.expression = expr
-                existing.comment = comment
-                registered[name] = existing
+                    # Enhetsløs parameter
+                    existing.value = new_value
+                existing.comment = defn.comment
+                registered[defn.name] = existing
                 return existing
-            units_argument = unit if unit else ""
-            if units_argument and is_supported_unit(units_argument):
-                try:
-                    numeric_value = units_manager.evaluateExpression(expr, units_argument)
-                except Exception:
-                    value_input = adsk.core.ValueInput.createByString(expr)
-                    units_argument = ""
-                else:
-                    value_input = adsk.core.ValueInput.createByReal(numeric_value)
-            else:
-                value_input = adsk.core.ValueInput.createByString(expr)
-                units_argument = ""
-            param = user_params.add(name, value_input, units_argument, comment)
-            registered[name] = param
+            except Exception:
+                if ui:
+                    ui.messageBox(
+                        "Feil ved oppdatering av brukerparameter "
+                        f"'{defn.name}' med uttrykk '{expr}'"
+                    )
+                raise
+
+        # Opprett ny parameter
+        try:
+            value_input = adsk.core.ValueInput.createByString(expr)
+            param = user_params.add(defn.name, value_input, defn.unit, defn.comment)
+            registered[defn.name] = param
             return param
         except Exception:
             if ui:
                 ui.messageBox(
-                    f"Feil ved opprettelse/oppdatering av brukerparameter '{name}' med uttrykk '{expr}'"
+                    "Feil ved opprettelse av brukerparameter "
+                    f"'{defn.name}' med uttrykk '{expr}'"
                 )
             raise
 
     for definition in PARAMETER_DEFINITIONS:
-        expression = f"{definition.value} {definition.unit}".strip()
-        registered[definition.name] = add_param(
-            definition.name,
-            expression,
-            definition.unit,
-            definition.comment,
-        )
+        sync_param(definition)
 
     return registered
-
 
 def param_to_unit(
     design: adsk.fusion.Design, param: adsk.fusion.UserParameter, unit: str
