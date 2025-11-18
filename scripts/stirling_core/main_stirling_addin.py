@@ -132,11 +132,7 @@ def ensure_directories() -> None:
 def register_user_parameters(
     design: adsk.fusion.Design,
 ) -> Dict[str, adsk.fusion.UserParameter]:
-    """Synkroniserer brukerparametre med definerte standarder.
-
-    Implementasjonen følger ``codex_fusionapi_v1.9``-mønsteret for å være robust
-    mot locale-variasjoner og eksisterende parametre med avvikende enheter.
-    """
+    """Synkroniserer brukerparametre med definerte standarder."""
 
     app = adsk.core.Application.get()
     ui = app.userInterface if app else None
@@ -144,73 +140,85 @@ def register_user_parameters(
     units_manager = design.unitsManager
     registered: Dict[str, adsk.fusion.UserParameter] = {}
 
-    def make_expression(value: float, unit: str) -> str:
-        """Bygger et locale-uavhengig uttrykk, f.eks. '63 mm' eller '1.4'."""
-        if unit:
-            return f"{value:g} {unit}"
-        return f"{value:g}"
-
     length_units = {"mm", "cm", "m", "in", "ft"}
     angle_units = {"deg", "rad"}
-    temperature_units = {"degc", "degf", "kelvin", "rankine", "k"}
+    temperature_units = {
+        "degc",
+        "c",
+        "celsius",
+        "degf",
+        "f",
+        "fahrenheit",
+        "kelvin",
+        "k",
+        "rankine",
+    }
+    length_to_mm = {
+        "mm": 1.0,
+        "cm": 10.0,
+        "m": 1000.0,
+        "in": 25.4,
+        "ft": 304.8,
+    }
 
-    def value_input_from_expression(expr: str, defn: ParameterDef) -> adsk.core.ValueInput:
-        """Prøver å bygge ValueInput fra streng, med robust fallback."""
+    def normalize_unit(unit: str) -> str:
+        return unit.strip().lower()
+
+    def resolve_unit(unit: str) -> str:
+        unit = unit or ""
+        if not unit:
+            return ""
         try:
-            return adsk.core.ValueInput.createByString(expr)
-        except RuntimeError:
-            pass
-
-        unit = defn.unit
-        normalized_unit = unit.lower() if unit else ""
-        default_unit = ""
-        if normalized_unit in length_units:
-            default_unit = units_manager.defaultLengthUnits
-        elif normalized_unit in angle_units:
-            default_unit = units_manager.defaultAngleUnits
-        elif normalized_unit in temperature_units:
-            default_unit = getattr(units_manager, "defaultTemperatureUnits", "")
-
-        if default_unit and unit:
-            try:
-                converted_value = units_manager.convert(defn.value, unit, default_unit)
-                return adsk.core.ValueInput.createByReal(converted_value)
-            except Exception:
-                pass
-
-        return adsk.core.ValueInput.createByReal(defn.value)
-
-    def eval_expression(expr: str, target_unit: str, fallback_value: float) -> float:
-        """Evaluerer et uttrykk til numerisk verdi i ønsket enhet, med fallback."""
-        try:
-            if target_unit:
-                return units_manager.evaluateExpression(expr, target_unit)
-            return units_manager.evaluateExpression(expr, "")
+            if units_manager.isValidUnit(unit):
+                return unit
         except Exception:
-            if ui:
-                ui.messageBox(
-                    "Kunne ikke evaluere uttrykk "
-                    f"'{expr}' til enhet '{target_unit}'. "
-                    f"Bruker fallback-verdi {fallback_value}."
-                )
-            return fallback_value
+            pass
+        normalized = normalize_unit(unit)
+        fallback = ""
+        if normalized in length_units:
+            fallback = getattr(units_manager, "defaultLengthUnits", "")
+        elif normalized in angle_units:
+            fallback = getattr(units_manager, "defaultAngleUnits", "")
+        elif normalized in temperature_units:
+            fallback = getattr(units_manager, "defaultTemperatureUnits", "") or "kelvin"
+        if fallback:
+            try:
+                if units_manager.isValidUnit(fallback):
+                    return fallback
+            except Exception:
+                return fallback
+        return ""
+
+    def value_to_internal(value: float, unit: str) -> float:
+        unit = unit or ""
+        normalized = normalize_unit(unit) if unit else ""
+        if normalized in length_units:
+            mm_value = value * length_to_mm.get(normalized, 1.0)
+            return mm_to_cm(mm_value)
+        if normalized in angle_units:
+            return math.radians(value) if normalized == "deg" else value
+        if normalized in temperature_units:
+            if normalized in {"degc", "c", "celsius"}:
+                return value + 273.15
+            if normalized in {"degf", "f", "fahrenheit"}:
+                return (value + 459.67) * (5.0 / 9.0)
+            if normalized in {"rankine"}:
+                return value * (5.0 / 9.0)
+            # kelvin / k faller igjennom til returverdi
+        return value
 
     def sync_param(defn: ParameterDef) -> adsk.fusion.UserParameter:
-        expr = make_expression(defn.value, defn.unit)
         existing = user_params.itemByName(defn.name)
+        unit_for_param = resolve_unit(defn.unit)
+        value_internal = value_to_internal(defn.value, defn.unit or unit_for_param)
 
         # Oppdater eksisterende parameter
         if existing:
             try:
-                target_unit = defn.unit or existing.unit or ""
-                new_value = eval_expression(expr, target_unit, defn.value)
+                target_unit = unit_for_param or existing.unit or ""
                 if target_unit:
-                    # Sørg for korrekt enhetsmetadata + verdi
                     existing.unit = target_unit
-                    existing.value = new_value
-                else:
-                    # Enhetsløs parameter
-                    existing.value = new_value
+                existing.value = value_internal
                 existing.comment = defn.comment
                 registered[defn.name] = existing
                 return existing
@@ -218,21 +226,21 @@ def register_user_parameters(
                 if ui:
                     ui.messageBox(
                         "Feil ved oppdatering av brukerparameter "
-                        f"'{defn.name}' med uttrykk '{expr}'"
+                        f"'{defn.name}'"
                     )
                 raise
 
         # Opprett ny parameter
         try:
-            value_input = value_input_from_expression(expr, defn)
-            param = user_params.add(defn.name, value_input, defn.unit, defn.comment)
+            value_input = adsk.core.ValueInput.createByReal(value_internal)
+            param = user_params.add(defn.name, value_input, unit_for_param, defn.comment)
             registered[defn.name] = param
             return param
         except Exception:
             if ui:
                 ui.messageBox(
                     "Feil ved opprettelse av brukerparameter "
-                    f"'{defn.name}' med uttrykk '{expr}'"
+                    f"'{defn.name}'"
                 )
             raise
 
