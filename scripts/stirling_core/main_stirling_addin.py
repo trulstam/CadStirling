@@ -714,29 +714,16 @@ def build_joints(design: adsk.fusion.Design, records: Dict[str, ComponentRecord]
     root = design.rootComponent
     joints = root.joints
 
-    def _origin_geometry(record: ComponentRecord) -> adsk.fusion.JointGeometry:
-        origin_point = record.component.originConstructionPoint
-        if origin_point is None:
-            raise BuilderError(f"Komponenten '{record.name}' mangler origo-konstruksjonspunkt for joints.")
-        if not origin_point.isValid:
-            raise BuilderError(f"Origo-punktet til '{record.name}' er ugyldig og kan ikke brukes til joints.")
-        return adsk.fusion.JointGeometry.createByPoint(origin_point)
+    frame_occ = records["frame"].occurrence
+    x_axis = root.xConstructionAxis
+    y_axis = root.yConstructionAxis
+    z_axis = root.zConstructionAxis
 
-    def _axis_line(x: float = 0.0, y: float = 0.0, z: float = 1.0) -> adsk.core.InfiniteLine3D:
-        vec = adsk.core.Vector3D.create(x, y, z)
-        if not vec.length:
-            raise BuilderError("Aksen kan ikke være en nullvektor.")
-        vec.normalize()
-        return adsk.core.InfiniteLine3D.create(adsk.core.Point3D.create(0, 0, 0), vec)
+    if not all((x_axis, y_axis, z_axis)):
+        raise BuilderError("Standard aksene til rotkomponenten er ikke tilgjengelige for joints.")
 
-    frame_geom = _origin_geometry(records["frame"])
-    x_axis_line = _axis_line(1, 0, 0)
-    y_axis_line = _axis_line(0, 1, 0)
-    z_axis_line = _axis_line(0, 0, 1)
-
-    # 1) Rigid: lås sylindre og thermal til ramme (står allerede korrekt)
     def rigid_to_frame(child_record: ComponentRecord):
-        ji = joints.createInput(_origin_geometry(child_record), frame_geom)
+        ji = joints.createInput(child_record.occurrence, frame_occ)
         ji.setAsRigidJointMotion()
         joints.add(ji)
 
@@ -744,30 +731,28 @@ def build_joints(design: adsk.fusion.Design, records: Dict[str, ComponentRecord]
     rigid_to_frame(records["displacer_cylinder"])
     rigid_to_frame(records["thermal"])
 
-    # 2) Revolute: veivaksel i ramme — rotasjonsakse langs verdens X
     crank_record = records["crankshaft"]
-    ji_crank = joints.createInput(_origin_geometry(crank_record), frame_geom)
-    ji_crank.setAsRevoluteJointMotion(adsk.fusion.JointDirections.CustomJointDirection, x_axis_line)
+    ji_crank = joints.createInput(crank_record.occurrence, frame_occ)
+    ji_crank.setAsRevoluteJointMotion(adsk.fusion.JointDirections.CustomJointDirection, x_axis)
     joints.add(ji_crank)
 
-    # 3) Revolute: svinghjul på veivaksel — koaksial med veivaksel
     fly_record = records["flywheel"]
-    ji_fly = joints.createInput(_origin_geometry(fly_record), _origin_geometry(crank_record))
-    ji_fly.setAsRevoluteJointMotion(adsk.fusion.JointDirections.CustomJointDirection, x_axis_line)
+    ji_fly = joints.createInput(fly_record.occurrence, crank_record.occurrence)
+    ji_fly.setAsRevoluteJointMotion(adsk.fusion.JointDirections.CustomJointDirection, x_axis)
     joints.add(ji_fly)
 
-    # 4) Slider: stempler langs sylinderaksene
-    # Arbeidssylinder vertikal → Z-akse
-    ji_wp = joints.createInput(_origin_geometry(records["work_piston"]), _origin_geometry(records["work_cylinder"]))
-    ji_wp.setAsSliderJointMotion(adsk.fusion.JointDirections.CustomJointDirection, z_axis_line)
+    work_piston = records["work_piston"]
+    work_cylinder = records["work_cylinder"]
+    ji_wp = joints.createInput(work_piston.occurrence, work_cylinder.occurrence)
+    ji_wp.setAsSliderJointMotion(adsk.fusion.JointDirections.CustomJointDirection, z_axis)
     joints.add(ji_wp)
 
-    # Fortrenger 90° vippet → Y-akse
-    ji_dp = joints.createInput(_origin_geometry(records["displacer"]), _origin_geometry(records["displacer_cylinder"]))
-    ji_dp.setAsSliderJointMotion(adsk.fusion.JointDirections.CustomJointDirection, y_axis_line)
+    displacer = records["displacer"]
+    displacer_cyl = records["displacer_cylinder"]
+    ji_dp = joints.createInput(displacer.occurrence, displacer_cyl.occurrence)
+    ji_dp.setAsSliderJointMotion(adsk.fusion.JointDirections.CustomJointDirection, y_axis)
     joints.add(ji_dp)
 
-    # 5) Legg metadata for 90° fase (MotionLink kommer i neste steg)
     design.attributes.add(_ATTR_GROUP, "phase_deg", "90")
 
 
