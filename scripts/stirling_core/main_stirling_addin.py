@@ -712,41 +712,40 @@ def apply_materials_and_appearances(
 
 def build_joints(design: adsk.fusion.Design, records: Dict[str, ComponentRecord], geom: Dict[str, float]) -> None:
     root = design.rootComponent
-    joints = root.joints
+    joints = root.asBuiltJoints
+    frame_occ = records["frame"].occurrence
 
-    # 1) Rigid: lås sylindre og thermal til ramme (står allerede korrekt)
-    def rigid_to_frame(child_occ: adsk.fusion.Occurrence):
-        ji = joints.createInput(child_occ, records["frame"].occurrence)
-        ji.setAsRigidJointMotion()
+    def _add_joint(parent: adsk.fusion.Occurrence, child: adsk.fusion.Occurrence, kind: str, axis: Optional[adsk.core.Vector3D] = None) -> None:
+        ji = joints.createInput(parent, child)
+        if kind == "rigid":
+            ji.setAsRigidJointMotion()
+        elif kind == "revolute":
+            ji.setAsRevoluteJointMotion(axis or adsk.core.Vector3D.create(0, 0, 1))
+        elif kind == "slider":
+            ji.setAsSliderJointMotion(axis or adsk.core.Vector3D.create(0, 0, 1))
+        else:
+            raise ValueError(f"Unsupported joint type: {kind}")
         joints.add(ji)
 
-    rigid_to_frame(records["work_cylinder"].occurrence)
-    rigid_to_frame(records["displacer_cylinder"].occurrence)
-    rigid_to_frame(records["thermal"].occurrence)
+    # 1) Rigid: lås sylindre og thermal til ramme (står allerede korrekt)
+    _add_joint(frame_occ, records["work_cylinder"].occurrence, "rigid")
+    _add_joint(frame_occ, records["displacer_cylinder"].occurrence, "rigid")
+    _add_joint(frame_occ, records["thermal"].occurrence, "rigid")
 
     # 2) Revolute: veivaksel i ramme — rotasjonsakse langs verdens X
     crank_occ = records["crankshaft"].occurrence
-    frame_occ = records["frame"].occurrence
-    ji_crank = joints.createInput(crank_occ, frame_occ)
-    ji_crank.setAsRevoluteJointMotion(adsk.core.Vector3D.create(1,0,0))
-    joints.add(ji_crank)
+    _add_joint(frame_occ, crank_occ, "revolute", adsk.core.Vector3D.create(1, 0, 0))
 
     # 3) Revolute: svinghjul på veivaksel — koaksial med veivaksel
     fly_occ = records["flywheel"].occurrence
-    ji_fly = joints.createInput(fly_occ, crank_occ)
-    ji_fly.setAsRevoluteJointMotion(adsk.core.Vector3D.create(1,0,0))
-    joints.add(ji_fly)
+    _add_joint(crank_occ, fly_occ, "revolute", adsk.core.Vector3D.create(1, 0, 0))
 
     # 4) Slider: stempler langs sylinderaksene
     # Arbeidssylinder vertikal → Z-akse
-    ji_wp = joints.createInput(records["work_piston"].occurrence, records["work_cylinder"].occurrence)
-    ji_wp.setAsSliderJointMotion(adsk.core.Vector3D.create(0,0,1))
-    joints.add(ji_wp)
+    _add_joint(records["work_cylinder"].occurrence, records["work_piston"].occurrence, "slider", adsk.core.Vector3D.create(0, 0, 1))
 
     # Fortrenger 90° vippet → Y-akse
-    ji_dp = joints.createInput(records["displacer"].occurrence, records["displacer_cylinder"].occurrence)
-    ji_dp.setAsSliderJointMotion(adsk.core.Vector3D.create(0,1,0))
-    joints.add(ji_dp)
+    _add_joint(records["displacer_cylinder"].occurrence, records["displacer"].occurrence, "slider", adsk.core.Vector3D.create(0, 1, 0))
 
     # 5) Legg metadata for 90° fase (MotionLink kommer i neste steg)
     design.attributes.add(_ATTR_GROUP, "phase_deg", "90")
