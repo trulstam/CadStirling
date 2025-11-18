@@ -150,6 +150,36 @@ def register_user_parameters(
             return f"{value:g} {unit}"
         return f"{value:g}"
 
+    length_units = {"mm", "cm", "m", "in", "ft"}
+    angle_units = {"deg", "rad"}
+    temperature_units = {"degc", "degf", "kelvin", "rankine", "k"}
+
+    def value_input_from_expression(expr: str, defn: ParameterDef) -> adsk.core.ValueInput:
+        """Prøver å bygge ValueInput fra streng, med robust fallback."""
+        try:
+            return adsk.core.ValueInput.createByString(expr)
+        except RuntimeError:
+            pass
+
+        unit = defn.unit
+        normalized_unit = unit.lower() if unit else ""
+        default_unit = ""
+        if normalized_unit in length_units:
+            default_unit = units_manager.defaultLengthUnits
+        elif normalized_unit in angle_units:
+            default_unit = units_manager.defaultAngleUnits
+        elif normalized_unit in temperature_units:
+            default_unit = getattr(units_manager, "defaultTemperatureUnits", "")
+
+        if default_unit and unit:
+            try:
+                converted_value = units_manager.convert(defn.value, unit, default_unit)
+                return adsk.core.ValueInput.createByReal(converted_value)
+            except Exception:
+                pass
+
+        return adsk.core.ValueInput.createByReal(defn.value)
+
     def eval_expression(expr: str, target_unit: str, fallback_value: float) -> float:
         """Evaluerer et uttrykk til numerisk verdi i ønsket enhet, med fallback."""
         try:
@@ -194,7 +224,7 @@ def register_user_parameters(
 
         # Opprett ny parameter
         try:
-            value_input = adsk.core.ValueInput.createByString(expr)
+            value_input = value_input_from_expression(expr, defn)
             param = user_params.add(defn.name, value_input, defn.unit, defn.comment)
             registered[defn.name] = param
             return param
