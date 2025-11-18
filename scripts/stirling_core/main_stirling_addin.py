@@ -1,4 +1,4 @@
-# ID: codex_fusionapi_v1.7
+# ID: codex_fusionapi_v1.8
 """Parametrisk Stirlingmotor-generator for Autodesk Fusion 360."""
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import adsk.core
 import adsk.fusion
 import traceback
 
-ID_TAG = "codex_fusionapi_v1.7"
+ID_TAG = "codex_fusionapi_v1.8"
 _COMPLIANCE_BANNER = f"COMPLIANCE BANNER :: ID {ID_TAG} :: stirling_core"
 _ATTR_GROUP = "stirling_core"
 
@@ -150,6 +150,36 @@ def register_user_parameters(
             return f"{value:g} {unit}"
         return f"{value:g}"
 
+    length_units = {"mm", "cm", "m", "in", "ft"}
+    angle_units = {"deg", "rad"}
+    temperature_units = {"degc", "degf", "kelvin", "rankine", "k"}
+
+    def value_input_from_expression(expr: str, defn: ParameterDef) -> adsk.core.ValueInput:
+        """Prøver å bygge ValueInput fra streng, med robust fallback."""
+        try:
+            return adsk.core.ValueInput.createByString(expr)
+        except RuntimeError:
+            pass
+
+        unit = defn.unit
+        normalized_unit = unit.lower() if unit else ""
+        default_unit = ""
+        if normalized_unit in length_units:
+            default_unit = units_manager.defaultLengthUnits
+        elif normalized_unit in angle_units:
+            default_unit = units_manager.defaultAngleUnits
+        elif normalized_unit in temperature_units:
+            default_unit = getattr(units_manager, "defaultTemperatureUnits", "")
+
+        if default_unit and unit:
+            try:
+                converted_value = units_manager.convert(defn.value, unit, default_unit)
+                return adsk.core.ValueInput.createByReal(converted_value)
+            except Exception:
+                pass
+
+        return adsk.core.ValueInput.createByReal(defn.value)
+
     def eval_expression(expr: str, target_unit: str, fallback_value: float) -> float:
         """Evaluerer et uttrykk til numerisk verdi i ønsket enhet, med fallback."""
         try:
@@ -194,7 +224,7 @@ def register_user_parameters(
 
         # Opprett ny parameter
         try:
-            value_input = adsk.core.ValueInput.createByString(expr)
+            value_input = value_input_from_expression(expr, defn)
             param = user_params.add(defn.name, value_input, defn.unit, defn.comment)
             registered[defn.name] = param
             return param
@@ -275,67 +305,61 @@ def compute_performance_metrics(
     }
 
 
-def create_component_records(
-    design: adsk.fusion.Design, geom: Dict[str, float]
-) -> Dict[str, ComponentRecord]:
+def create_component_records(design: adsk.fusion.Design, geom: Dict[str, float]) -> Dict[str, ComponentRecord]:
     root = design.rootComponent
-    occurrences = root.occurrences
-    records: Dict[str, ComponentRecord] = {}
+    occs = root.occurrences
+    R: Dict[str, ComponentRecord] = {}
 
-    def _new_component(name: str, transform: Optional[adsk.core.Matrix3D] = None) -> ComponentRecord:
-        matrix = transform or adsk.core.Matrix3D.create()
-        occurrence = occurrences.addNewComponent(matrix)
-        occurrence.component.name = name
-        return ComponentRecord(name=name, component=occurrence.component, occurrence=occurrence, bodies=[])
+    def _new(name: str, m: Optional[adsk.core.Matrix3D] = None) -> ComponentRecord:
+        m = m or adsk.core.Matrix3D.create()
+        occ = occs.addNewComponent(m)
+        occ.component.name = name
+        return ComponentRecord(name=name, component=occ.component, occurrence=occ, bodies=[])
 
-    base_transform = adsk.core.Matrix3D.create()
-    records["frame"] = _new_component("Ramme og bunnplate", base_transform)
+    # 0) Ramme/bunnplate på origo, grunnlagt (grounded)
+    R["frame"] = _new("Ramme og bunnplate")
+    R["frame"].occurrence.isGrounded = True
 
-    work_transform = adsk.core.Matrix3D.create()
-    work_transform.translation = adsk.core.Vector3D.create(
-        0,
-        0,
-        mm_to_cm(geom["base_thick"]),
-    )
-    records["work_cylinder"] = _new_component("Arbeidssylinder", work_transform)
+    # Plassering: separer sylindre langs X, legg dem på bunnplata i Z
+    z_plate = geom["base_thick"]        # mm
+    x_half  = geom["offset"] * 0.5      # mm
 
-    disp_transform = adsk.core.Matrix3D.create()
-    disp_transform.setToRotation(
-        math.radians(param_angle(design, "ANGLE_CYL")),
-        adsk.core.Vector3D.create(1, 0, 0),
-        adsk.core.Point3D.create(0, 0, 0),
-    )
-    disp_transform.translation = adsk.core.Vector3D.create(
-        mm_to_cm(geom["offset"]),
-        0,
-        mm_to_cm(geom["base_thick"] + geom["len_disp"] / 2.0),
-    )
-    records["displacer_cylinder"] = _new_component("Fortrengersylinder", disp_transform)
+    # 1) Arbeidssylinder — vertikal (akse = Z), til venstre
+    m_work = adsk.core.Matrix3D.create()
+    m_work.translation = adsk.core.Vector3D.create(mm_to_cm(-x_half), 0, mm_to_cm(z_plate))
+    R["work_cylinder"] = _new("Arbeidssylinder", m_work)
 
-    piston_transform = adsk.core.Matrix3D.create()
-    piston_transform.translation = adsk.core.Vector3D.create(
-        0,
-        0,
-        mm_to_cm(geom["base_thick"] + geom["len_work"] / 2.0),
-    )
-    records["work_piston"] = _new_component("Arbeidsstempel", piston_transform)
+    # 2) Fortrengersylinder — 90° vippet (akse = Y), til høyre
+    m_disp = adsk.core.Matrix3D.create()
+    m_disp.setToRotation(math.radians(90.0), adsk.core.Vector3D.create(1,0,0), adsk.core.Point3D.create(0,0,0))
+    m_disp.translation = adsk.core.Vector3D.create(mm_to_cm(+x_half), 0, mm_to_cm(z_plate))
+    R["displacer_cylinder"] = _new("Fortrengersylinder", m_disp)
 
-    disp_piston_transform = adsk.core.Matrix3D.create()
-    disp_piston_transform.translation = adsk.core.Vector3D.create(
-        mm_to_cm(geom["offset"]),
-        0,
-        mm_to_cm(geom["base_thick"] + geom["len_disp"] / 2.0),
-    )
-    records["displacer"] = _new_component("Fortrenger", disp_piston_transform)
+    # 3) Stempler — start inne i sine respektive sylindre
+    m_wp = adsk.core.Matrix3D.create()
+    m_wp.translation = adsk.core.Vector3D.create(mm_to_cm(-x_half), 0, mm_to_cm(z_plate + geom["len_work"]/2.0))
+    R["work_piston"] = _new("Arbeidsstempel", m_wp)
 
-    crank_transform = adsk.core.Matrix3D.create()
-    crank_transform.translation = adsk.core.Vector3D.create(0, mm_to_cm(geom["base_width"] / 2.0 - 25.0), mm_to_cm(geom["base_thick"] / 2.0))
-    records["crankshaft"] = _new_component("Veivaksel", crank_transform)
+    m_dp = adsk.core.Matrix3D.create()
+    m_dp.setToRotation(math.radians(90.0), adsk.core.Vector3D.create(1,0,0), adsk.core.Point3D.create(0,0,0))
+    m_dp.translation = adsk.core.Vector3D.create(mm_to_cm(+x_half), 0, mm_to_cm(z_plate + geom["len_disp"]/2.0))
+    R["displacer"] = _new("Fortrenger", m_dp)
 
-    records["flywheel"] = _new_component("Svinghjul")
-    records["connecting_rods"] = _new_component("Koblingsstenger")
-    records["thermal"] = _new_component("Varme og kjøl")
-    return records
+    # 4) Veivaksel og svinghjul — foran (positiv Y), i høyde rundt midt-sylinder
+    y_front = geom["base_width"]/2.0 - 25.0
+    z_shaft = z_plate + max(geom["len_work"], geom["len_disp"])/2.0
+
+    m_crank = adsk.core.Matrix3D.create()
+    m_crank.translation = adsk.core.Vector3D.create(0, mm_to_cm(y_front), mm_to_cm(z_shaft))
+    R["crankshaft"] = _new("Veivaksel", m_crank)
+
+    m_fly = adsk.core.Matrix3D.create()
+    m_fly.translation = adsk.core.Vector3D.create(0, mm_to_cm(y_front + 10.0), mm_to_cm(z_shaft))
+    R["flywheel"] = _new("Svinghjul", m_fly)
+
+    R["connecting_rods"] = _new("Koblingsstenger")
+    R["thermal"] = _new("Varme og kjøl")
+    return R
 
 
 def param_angle(design: adsk.fusion.Design, name: str) -> float:
@@ -678,22 +702,46 @@ def apply_materials_and_appearances(
                 body.appearance = appearance
 
 
-def build_joints(
-    design: adsk.fusion.Design, records: Dict[str, ComponentRecord], geom: Dict[str, float]
-) -> None:
+def build_joints(design: adsk.fusion.Design, records: Dict[str, ComponentRecord], geom: Dict[str, float]) -> None:
     root = design.rootComponent
-    joints = root.asBuiltJoints
-    base_occ = records["frame"].occurrence
-    for key, record in records.items():
-        if key == "frame":
-            continue
-        try:
-            joint_input = joints.createInput(base_occ, record.occurrence)
-            joint_input.setAsRigidJointMotion()
-            joints.add(joint_input)
-        except Exception:
-            continue
-    design.attributes.add(_ATTR_GROUP, "phase_offset_deg", f"{geom['offset']:.1f}@{param_angle(design, 'ANGLE_CYL'):.1f}")
+    joints = root.joints
+
+    # 1) Rigid: lås sylindre og thermal til ramme (står allerede korrekt)
+    def rigid_to_frame(child_occ: adsk.fusion.Occurrence):
+        ji = joints.createInput(child_occ, records["frame"].occurrence)
+        ji.setAsRigidJointMotion()
+        joints.add(ji)
+
+    rigid_to_frame(records["work_cylinder"].occurrence)
+    rigid_to_frame(records["displacer_cylinder"].occurrence)
+    rigid_to_frame(records["thermal"].occurrence)
+
+    # 2) Revolute: veivaksel i ramme — rotasjonsakse langs verdens X
+    crank_occ = records["crankshaft"].occurrence
+    frame_occ = records["frame"].occurrence
+    ji_crank = joints.createInput(crank_occ, frame_occ)
+    ji_crank.setAsRevoluteJointMotion(adsk.core.Vector3D.create(1,0,0))
+    joints.add(ji_crank)
+
+    # 3) Revolute: svinghjul på veivaksel — koaksial med veivaksel
+    fly_occ = records["flywheel"].occurrence
+    ji_fly = joints.createInput(fly_occ, crank_occ)
+    ji_fly.setAsRevoluteJointMotion(adsk.core.Vector3D.create(1,0,0))
+    joints.add(ji_fly)
+
+    # 4) Slider: stempler langs sylinderaksene
+    # Arbeidssylinder vertikal → Z-akse
+    ji_wp = joints.createInput(records["work_piston"].occurrence, records["work_cylinder"].occurrence)
+    ji_wp.setAsSliderJointMotion(adsk.core.Vector3D.create(0,0,1))
+    joints.add(ji_wp)
+
+    # Fortrenger 90° vippet → Y-akse
+    ji_dp = joints.createInput(records["displacer"].occurrence, records["displacer_cylinder"].occurrence)
+    ji_dp.setAsSliderJointMotion(adsk.core.Vector3D.create(0,1,0))
+    joints.add(ji_dp)
+
+    # 5) Legg metadata for 90° fase (MotionLink kommer i neste steg)
+    design.attributes.add(_ATTR_GROUP, "phase_deg", "90")
 
 
 def generate_drawings(design: adsk.fusion.Design, records: Dict[str, ComponentRecord]) -> None:
