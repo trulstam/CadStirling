@@ -597,7 +597,11 @@ def build_flywheel(record: ComponentRecord, geom: Dict[str, float]) -> None:
     body.name = "Svinghjul"
     record.bodies.append(body)
 
-    cut_sketch = comp.sketches.add(body.endFaces[0])
+    end_faces = ext.endFaces
+    target_face = end_faces.item(0) if end_faces.count > 0 else None
+    if target_face is None:
+        raise BuilderError("Fant ingen endeflate på svinghjulet for å lage gjennomgående hull.")
+    cut_sketch = comp.sketches.add(target_face)
     cut_circles = cut_sketch.sketchCurves.sketchCircles
     cut_circles.addByCenterRadius(center, mm_to_cm(geom["shaft_d"] / 2.0))
     cut_profile = cut_sketch.profiles.item(0)
