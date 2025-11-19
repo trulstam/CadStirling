@@ -1,4 +1,4 @@
-# ID: codex_fusionapi_v1.8
+# ID: codex_fusionapi_v1.9
 """Parametrisk Stirlingmotor-generator for Autodesk Fusion 360."""
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import adsk.core
 import adsk.fusion
 import traceback
 
-ID_TAG = "codex_fusionapi_v1.8"
+ID_TAG = "codex_fusionapi_v1.9"
 _COMPLIANCE_BANNER = f"COMPLIANCE BANNER :: ID {ID_TAG} :: stirling_core"
 _ATTR_GROUP = "stirling_core"
 
@@ -51,6 +51,13 @@ class ComponentRecord:
     component: adsk.fusion.Component
     occurrence: adsk.fusion.Occurrence
     bodies: List[adsk.fusion.BRepBody]
+
+
+@dataclass
+class LayoutEntry:
+    origin: Tuple[float, float, float]
+    orientation: Tuple[float, float, float]
+    parent: Optional[str] = None
 
 
 PARAMETER_DEFINITIONS: Tuple[ParameterDef, ...] = (
@@ -95,23 +102,14 @@ def run(context: str) -> None:
         design = adsk.fusion.Design.cast(app.activeProduct)
         if not design:
             raise BuilderError("Aktivt dokument er ikke en Fusion 360 Design.")
-        ensure_directories()
-        params = register_user_parameters(design)
-        geom = compute_geometry_inputs(design, params)
-        metrics = compute_performance_metrics(params, geom)
-        records = create_component_records(design, geom)
-        build_geometry(design, records, geom)
-        apply_materials_and_appearances(design, records)
-        build_joints(design, records, geom)
-        generate_drawings(design, records)
+        params = define_parameters(design)
+        records, geom, metrics = create_geometry(design, params)
+        layout_table = build_layout_table(params, geom)
+        apply_layout(design.rootComponent, records, layout_table)
         clearance_report = evaluate_clearances(params, geom)
-        export_all(records, design)
-        bom_entries = compile_bom_entries(params, geom, metrics)
-        write_bom(bom_entries)
-        write_arbeidsplan()
-        update_changelog()
-        write_simulation_stub(metrics)
-        apply_metadata(design, metrics, clearance_report)
+        create_kinematics(design, records, geom)
+        generate_drawings(design, records)
+        export_BOM(design, records, params, geom, metrics, clearance_report)
         summarize(ui, metrics, clearance_report)
     except Exception:  # pragma: no cover - Fusion viser detaljer
         if ui:
@@ -122,6 +120,213 @@ def run(context: str) -> None:
 
 def stop(context: str) -> None:
     print(f"Stopper skript :: {_COMPLIANCE_BANNER}")
+
+
+def define_parameters(design: adsk.fusion.Design) -> Dict[str, adsk.fusion.UserParameter]:
+    """Opprett og synkroniser alle brukerparametre før videre generering."""
+
+    ensure_directories()
+    return register_user_parameters(design)
+
+
+def create_geometry(
+    design: adsk.fusion.Design,
+    params: Dict[str, adsk.fusion.UserParameter],
+) -> Tuple[Dict[str, ComponentRecord], Dict[str, float], Dict[str, float]]:
+    """Generer alle komponenter og tilhørende metadata."""
+
+    geom = compute_geometry_inputs(design, params)
+    metrics = compute_performance_metrics(params, geom)
+    records = create_component_records(design)
+    build_geometry(design, records, geom)
+    apply_materials_and_appearances(design, records)
+    return records, geom, metrics
+
+
+def build_layout_table(
+    params: Dict[str, adsk.fusion.UserParameter], geom: Dict[str, float]
+) -> Dict[str, LayoutEntry]:
+    """Definerer posisjon/orientering for alle komponenter i gamma-oppsettet."""
+
+    _ = params  # Parametre beholdes for fremtidige layoututvidelser
+    base_z = geom["base_thick"]
+    cylinder_offset = geom["offset"] / 2.0
+    work_mid = base_z + geom["len_work"] / 2.0
+    disp_mid = base_z + geom["len_disp"] / 2.0
+    y_front = geom["base_width"] / 2.0 - 25.0
+    z_shaft = base_z + max(geom["len_work"], geom["len_disp"]) / 2.0
+
+    layout: Dict[str, LayoutEntry] = {
+        "frame": LayoutEntry(origin=(0.0, 0.0, 0.0), orientation=(0.0, 0.0, 0.0), parent=None),
+        "work_cylinder": LayoutEntry(
+            origin=(-cylinder_offset, 0.0, base_z),
+            orientation=(0.0, 0.0, 0.0),
+            parent="frame",
+        ),
+        "displacer_cylinder": LayoutEntry(
+            origin=(cylinder_offset, 0.0, base_z),
+            orientation=(0.0, 0.0, 0.0),
+            parent="frame",
+        ),
+        "work_piston": LayoutEntry(
+            origin=(-cylinder_offset, 0.0, work_mid),
+            orientation=(0.0, 0.0, 0.0),
+            parent="work_cylinder",
+        ),
+        "displacer": LayoutEntry(
+            origin=(cylinder_offset, 0.0, disp_mid),
+            orientation=(0.0, 0.0, 0.0),
+            parent="displacer_cylinder",
+        ),
+        "crankshaft": LayoutEntry(
+            origin=(0.0, y_front, z_shaft),
+            orientation=(0.0, 90.0, 0.0),
+            parent="frame",
+        ),
+        "flywheel": LayoutEntry(
+            origin=(0.0, y_front + 10.0, z_shaft),
+            orientation=(0.0, 90.0, 0.0),
+            parent="crankshaft",
+        ),
+        "thermal": LayoutEntry(
+            origin=(0.0, 0.0, base_z + geom["len_work"]),
+            orientation=(0.0, 0.0, 0.0),
+            parent="frame",
+        ),
+        "connecting_rods": LayoutEntry(
+            origin=(0.0, y_front, z_shaft),
+            orientation=(0.0, 0.0, 0.0),
+            parent="frame",
+        ),
+    }
+    return layout
+
+
+def apply_layout(
+    root: adsk.fusion.Component,
+    records: Dict[str, ComponentRecord],
+    layout: Dict[str, LayoutEntry],
+) -> None:
+    """Plasser alle komponentforekomster iht. layouttabellen."""
+
+    resolved = resolve_layout_table(layout)
+    for name, entry in resolved.items():
+        record = records.get(name)
+        if not record:
+            continue
+        transform = layout_entry_to_matrix(entry)
+        set_component_transform(record.occurrence, transform)
+
+
+def create_kinematics(
+    design: adsk.fusion.Design,
+    records: Dict[str, ComponentRecord],
+    geom: Dict[str, float],
+) -> None:
+    """Opprett kinematikk/ledd mellom komponentene."""
+
+    build_joints(design, records, geom)
+
+
+def export_BOM(
+    design: adsk.fusion.Design,
+    records: Dict[str, ComponentRecord],
+    params: Dict[str, adsk.fusion.UserParameter],
+    geom: Dict[str, float],
+    metrics: Dict[str, float],
+    clearances: Dict[str, float],
+) -> None:
+    """Generer eksportfiler, stykk-liste og metadata."""
+
+    export_all(records, design)
+    bom_entries = compile_bom_entries(params, geom, metrics)
+    write_bom(bom_entries)
+    write_arbeidsplan()
+    update_changelog()
+    write_simulation_stub(metrics)
+    apply_metadata(design, metrics, clearances)
+
+
+def resolve_layout_table(layout: Dict[str, LayoutEntry]) -> Dict[str, LayoutEntry]:
+    """Evaluerer layout med hensyn på foreldrenes posisjon/orientering."""
+
+    resolved: Dict[str, LayoutEntry] = {}
+
+    def _resolve(name: str) -> LayoutEntry:
+        if name in resolved:
+            return resolved[name]
+        entry = layout[name]
+        origin = entry.origin
+        orientation = entry.orientation
+        if entry.parent and entry.parent in layout:
+            parent_entry = _resolve(entry.parent)
+            origin = tuple(parent_entry.origin[i] + origin[i] for i in range(3))
+            orientation = tuple(parent_entry.orientation[i] + orientation[i] for i in range(3))
+        resolved[name] = LayoutEntry(origin=origin, orientation=orientation)
+        return resolved[name]
+
+    for key in layout:
+        _resolve(key)
+    return resolved
+
+
+def layout_entry_to_matrix(entry: LayoutEntry) -> adsk.core.Matrix3D:
+    matrix = compose_orientation_matrix(entry.orientation)
+    matrix.translation = adsk.core.Vector3D.create(
+        mm_to_cm(entry.origin[0]),
+        mm_to_cm(entry.origin[1]),
+        mm_to_cm(entry.origin[2]),
+    )
+    return matrix
+
+
+def compose_orientation_matrix(orientation: Tuple[float, float, float]) -> adsk.core.Matrix3D:
+    matrix = adsk.core.Matrix3D.create()
+    matrix.setToIdentity()
+    axes = (
+        adsk.core.Vector3D.create(1, 0, 0),
+        adsk.core.Vector3D.create(0, 1, 0),
+        adsk.core.Vector3D.create(0, 0, 1),
+    )
+    for angle_deg, axis in zip(orientation, axes):
+        if abs(angle_deg) < 1e-6:
+            continue
+        rotation = adsk.core.Matrix3D.create()
+        rotation.setToRotation(math.radians(angle_deg), axis, adsk.core.Point3D.create(0, 0, 0))
+        matrix.transformBy(rotation)
+    return matrix
+
+
+def set_component_transform(
+    occurrence: adsk.fusion.Occurrence, transform: adsk.core.Matrix3D
+) -> None:
+    try:
+        occurrence.transform2 = transform
+    except AttributeError:
+        occurrence.transform = transform
+
+
+def translate_component(
+    occurrence: adsk.fusion.Occurrence, dx_cm: float, dy_cm: float, dz_cm: float
+) -> None:
+    translation = adsk.core.Matrix3D.create()
+    translation.translation = adsk.core.Vector3D.create(dx_cm, dy_cm, dz_cm)
+    current = occurrence.transform2 if hasattr(occurrence, "transform2") else occurrence.transform
+    current.transformBy(translation)
+    set_component_transform(occurrence, current)
+
+
+def rotate_component(
+    occurrence: adsk.fusion.Occurrence,
+    axis_point: adsk.core.Point3D,
+    axis_vector: adsk.core.Vector3D,
+    angle_deg: float,
+) -> None:
+    rotation = adsk.core.Matrix3D.create()
+    rotation.setToRotation(math.radians(angle_deg), axis_vector, axis_point)
+    current = occurrence.transform2 if hasattr(occurrence, "transform2") else occurrence.transform
+    current.transformBy(rotation)
+    set_component_transform(occurrence, current)
 
 
 def ensure_directories() -> None:
@@ -313,14 +518,13 @@ def compute_performance_metrics(
     }
 
 
-def create_component_records(design: adsk.fusion.Design, geom: Dict[str, float]) -> Dict[str, ComponentRecord]:
+def create_component_records(design: adsk.fusion.Design) -> Dict[str, ComponentRecord]:
     root = design.rootComponent
     occs = root.occurrences
     R: Dict[str, ComponentRecord] = {}
 
-    def _new(name: str, m: Optional[adsk.core.Matrix3D] = None) -> ComponentRecord:
-        m = m or adsk.core.Matrix3D.create()
-        occ = occs.addNewComponent(m)
+    def _new(name: str) -> ComponentRecord:
+        occ = occs.addNewComponent(adsk.core.Matrix3D.create())
         occ.component.name = name
         return ComponentRecord(name=name, component=occ.component, occurrence=occ, bodies=[])
 
@@ -328,42 +532,13 @@ def create_component_records(design: adsk.fusion.Design, geom: Dict[str, float])
     R["frame"] = _new("Ramme og bunnplate")
     R["frame"].occurrence.isGrounded = True
 
-    # Plassering: separer sylindre langs X, legg dem på bunnplata i Z
-    z_plate = geom["base_thick"]        # mm
-    x_half  = geom["offset"] * 0.5      # mm
-
-    # 1) Arbeidssylinder — vertikal (akse = Z), til venstre
-    m_work = adsk.core.Matrix3D.create()
-    m_work.translation = adsk.core.Vector3D.create(mm_to_cm(-x_half), 0, mm_to_cm(z_plate))
-    R["work_cylinder"] = _new("Arbeidssylinder", m_work)
-
-    # 2) Fortrengersylinder — 90° vippet (akse = Y), til høyre
-    m_disp = adsk.core.Matrix3D.create()
-    m_disp.setToRotation(math.radians(90.0), adsk.core.Vector3D.create(1,0,0), adsk.core.Point3D.create(0,0,0))
-    m_disp.translation = adsk.core.Vector3D.create(mm_to_cm(+x_half), 0, mm_to_cm(z_plate))
-    R["displacer_cylinder"] = _new("Fortrengersylinder", m_disp)
-
-    # 3) Stempler — start inne i sine respektive sylindre
-    m_wp = adsk.core.Matrix3D.create()
-    m_wp.translation = adsk.core.Vector3D.create(mm_to_cm(-x_half), 0, mm_to_cm(z_plate + geom["len_work"]/2.0))
-    R["work_piston"] = _new("Arbeidsstempel", m_wp)
-
-    m_dp = adsk.core.Matrix3D.create()
-    m_dp.setToRotation(math.radians(90.0), adsk.core.Vector3D.create(1,0,0), adsk.core.Point3D.create(0,0,0))
-    m_dp.translation = adsk.core.Vector3D.create(mm_to_cm(+x_half), 0, mm_to_cm(z_plate + geom["len_disp"]/2.0))
-    R["displacer"] = _new("Fortrenger", m_dp)
-
-    # 4) Veivaksel og svinghjul — foran (positiv Y), i høyde rundt midt-sylinder
-    y_front = geom["base_width"]/2.0 - 25.0
-    z_shaft = z_plate + max(geom["len_work"], geom["len_disp"])/2.0
-
-    m_crank = adsk.core.Matrix3D.create()
-    m_crank.translation = adsk.core.Vector3D.create(0, mm_to_cm(y_front), mm_to_cm(z_shaft))
-    R["crankshaft"] = _new("Veivaksel", m_crank)
-
-    m_fly = adsk.core.Matrix3D.create()
-    m_fly.translation = adsk.core.Vector3D.create(0, mm_to_cm(y_front + 10.0), mm_to_cm(z_shaft))
-    R["flywheel"] = _new("Svinghjul", m_fly)
+    # Komponentforekomster opprettes rundt origo og flyttes av layoutfasen
+    R["work_cylinder"] = _new("Arbeidssylinder")
+    R["displacer_cylinder"] = _new("Fortrengersylinder")
+    R["work_piston"] = _new("Arbeidsstempel")
+    R["displacer"] = _new("Fortrenger")
+    R["crankshaft"] = _new("Veivaksel")
+    R["flywheel"] = _new("Svinghjul")
 
     R["connecting_rods"] = _new("Koblingsstenger")
     R["thermal"] = _new("Varme og kjøl")
