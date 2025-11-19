@@ -717,6 +717,8 @@ def build_joints(design: adsk.fusion.Design, records: Dict[str, ComponentRecord]
     frame_occ = records["frame"].occurrence
 
     def rigid_to_frame(child_occ: adsk.fusion.Occurrence) -> None:
+        """Lock an occurrence rigidly to the grounded frame."""
+
         ji = asb_joints.createInput(child_occ, frame_occ, None)
         ji.setAsRigidJointMotion()
         asb_joints.add(ji)
@@ -724,32 +726,15 @@ def build_joints(design: adsk.fusion.Design, records: Dict[str, ComponentRecord]
     rigid_to_frame(records["work_cylinder"].occurrence)
     rigid_to_frame(records["displacer_cylinder"].occurrence)
     rigid_to_frame(records["thermal"].occurrence)
+    rigid_to_frame(records["crankshaft"].occurrence)
+    rigid_to_frame(records["flywheel"].occurrence)
+    rigid_to_frame(records["work_piston"].occurrence)
+    rigid_to_frame(records["displacer"].occurrence)
+    rigid_to_frame(records["connecting_rods"].occurrence)
 
-    crank_occ = records["crankshaft"].occurrence
-    ji_crank = asb_joints.createInput(crank_occ, frame_occ, None)
-    ji_crank.setAsRevoluteJointMotion(adsk.fusion.JointDirections.XAxisJointDirection)
-    asb_joints.add(ji_crank)
-
-    fly_occ = records["flywheel"].occurrence
-    ji_fly = asb_joints.createInput(fly_occ, crank_occ, None)
-    ji_fly.setAsRevoluteJointMotion(adsk.fusion.JointDirections.XAxisJointDirection)
-    asb_joints.add(ji_fly)
-
-    ji_wp = asb_joints.createInput(
-        records["work_piston"].occurrence,
-        records["work_cylinder"].occurrence,
-        None,
-    )
-    ji_wp.setAsSliderJointMotion(adsk.fusion.JointDirections.ZAxisJointDirection)
-    asb_joints.add(ji_wp)
-
-    ji_dp = asb_joints.createInput(
-        records["displacer"].occurrence,
-        records["displacer_cylinder"].occurrence,
-        None,
-    )
-    ji_dp.setAsSliderJointMotion(adsk.fusion.JointDirections.YAxisJointDirection)
-    asb_joints.add(ji_dp)
+    # TODO(codex_fusionapi_v1.9): Reintroduce realistic kinematics using
+    # root.joints and explicit JointGeometry references (revolute for
+    # crankshaft/flywheel, slider for pistons).
 
     design.attributes.add(_ATTR_GROUP, "phase_deg", "90")
 
