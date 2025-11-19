@@ -1,8 +1,8 @@
-ID: codex_fusionapi_v1.1
+ID: codex_fusionapi_v1.2
 # Codex×Fusion360 — Generativ mekanikk & designskripting
 
 
-**Status:** v1.1 • **ID-regel:** Alle prompter/kode må inneholde en ID-tag (f.eks. `codex_fusionapi_v1.1`).
+**Status:** v1.2 • **ID-regel:** Alle prompter/kode må inneholde en ID-tag (f.eks. `codex_fusionapi_v1.2`).
 
 
 ## Formål
@@ -16,7 +16,7 @@ Utforske og utvikle generative, parametriske modeller i Autodesk Fusion 360 via 
    git clone https://github.com/<din-org>/CadStirling.git
    cd CadStirling
    ```
-2. Bekreft at `ID: codex_fusionapi_v1.1` står i første linje av all kommunikasjon (issues, commits, PRer) og i toppen av alle kodefiler.
+2. Bekreft at `ID: codex_fusionapi_v1.2` står i første linje av all kommunikasjon (issues, commits, PRer) og i toppen av alle kodefiler.
 3. Kjør `git status` før nye endringer og sørg for at commit-meldingens første linje starter med ID-en.
 
 ## Plassering av skriptkatalog
