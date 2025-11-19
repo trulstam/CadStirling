@@ -1,4 +1,4 @@
-# ID: codex_fusionapi_v1.7
+# ID: codex_fusionapi_v1.8
 """Parametrisk Stirlingmotor-generator for Autodesk Fusion 360."""
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import adsk.core
 import adsk.fusion
 import traceback
 
-ID_TAG = "codex_fusionapi_v1.7"
+ID_TAG = "codex_fusionapi_v1.8"
 _COMPLIANCE_BANNER = f"COMPLIANCE BANNER :: ID {ID_TAG} :: stirling_core"
 _ATTR_GROUP = "stirling_core"
 
@@ -132,11 +132,7 @@ def ensure_directories() -> None:
 def register_user_parameters(
     design: adsk.fusion.Design,
 ) -> Dict[str, adsk.fusion.UserParameter]:
-    """Synkroniserer brukerparametre med definerte standarder.
-
-    Implementasjonen følger ``codex_fusionapi_v1.9``-mønsteret for å være robust
-    mot locale-variasjoner og eksisterende parametre med avvikende enheter.
-    """
+    """Synkroniserer brukerparametre med definerte standarder."""
 
     app = adsk.core.Application.get()
     ui = app.userInterface if app else None
@@ -144,43 +140,85 @@ def register_user_parameters(
     units_manager = design.unitsManager
     registered: Dict[str, adsk.fusion.UserParameter] = {}
 
-    def make_expression(value: float, unit: str) -> str:
-        """Bygger et locale-uavhengig uttrykk, f.eks. '63 mm' eller '1.4'."""
-        if unit:
-            return f"{value:g} {unit}"
-        return f"{value:g}"
+    length_units = {"mm", "cm", "m", "in", "ft"}
+    angle_units = {"deg", "rad"}
+    temperature_units = {
+        "degc",
+        "c",
+        "celsius",
+        "degf",
+        "f",
+        "fahrenheit",
+        "kelvin",
+        "k",
+        "rankine",
+    }
+    length_to_mm = {
+        "mm": 1.0,
+        "cm": 10.0,
+        "m": 1000.0,
+        "in": 25.4,
+        "ft": 304.8,
+    }
 
-    def eval_expression(expr: str, target_unit: str, fallback_value: float) -> float:
-        """Evaluerer et uttrykk til numerisk verdi i ønsket enhet, med fallback."""
+    def normalize_unit(unit: str) -> str:
+        return unit.strip().lower()
+
+    def resolve_unit(unit: str) -> str:
+        unit = unit or ""
+        if not unit:
+            return ""
         try:
-            if target_unit:
-                return units_manager.evaluateExpression(expr, target_unit)
-            return units_manager.evaluateExpression(expr, "")
+            if units_manager.isValidUnit(unit):
+                return unit
         except Exception:
-            if ui:
-                ui.messageBox(
-                    "Kunne ikke evaluere uttrykk "
-                    f"'{expr}' til enhet '{target_unit}'. "
-                    f"Bruker fallback-verdi {fallback_value}."
-                )
-            return fallback_value
+            pass
+        normalized = normalize_unit(unit)
+        fallback = ""
+        if normalized in length_units:
+            fallback = getattr(units_manager, "defaultLengthUnits", "")
+        elif normalized in angle_units:
+            fallback = getattr(units_manager, "defaultAngleUnits", "")
+        elif normalized in temperature_units:
+            fallback = getattr(units_manager, "defaultTemperatureUnits", "") or "kelvin"
+        if fallback:
+            try:
+                if units_manager.isValidUnit(fallback):
+                    return fallback
+            except Exception:
+                return fallback
+        return ""
+
+    def value_to_internal(value: float, unit: str) -> float:
+        unit = unit or ""
+        normalized = normalize_unit(unit) if unit else ""
+        if normalized in length_units:
+            mm_value = value * length_to_mm.get(normalized, 1.0)
+            return mm_to_cm(mm_value)
+        if normalized in angle_units:
+            return math.radians(value) if normalized == "deg" else value
+        if normalized in temperature_units:
+            if normalized in {"degc", "c", "celsius"}:
+                return value + 273.15
+            if normalized in {"degf", "f", "fahrenheit"}:
+                return (value + 459.67) * (5.0 / 9.0)
+            if normalized in {"rankine"}:
+                return value * (5.0 / 9.0)
+            # kelvin / k faller igjennom til returverdi
+        return value
 
     def sync_param(defn: ParameterDef) -> adsk.fusion.UserParameter:
-        expr = make_expression(defn.value, defn.unit)
         existing = user_params.itemByName(defn.name)
+        unit_for_param = resolve_unit(defn.unit)
+        value_internal = value_to_internal(defn.value, defn.unit or unit_for_param)
 
         # Oppdater eksisterende parameter
         if existing:
             try:
-                target_unit = defn.unit or existing.unit or ""
-                new_value = eval_expression(expr, target_unit, defn.value)
+                target_unit = unit_for_param or existing.unit or ""
                 if target_unit:
-                    # Sørg for korrekt enhetsmetadata + verdi
                     existing.unit = target_unit
-                    existing.value = new_value
-                else:
-                    # Enhetsløs parameter
-                    existing.value = new_value
+                existing.value = value_internal
                 existing.comment = defn.comment
                 registered[defn.name] = existing
                 return existing
@@ -188,21 +226,21 @@ def register_user_parameters(
                 if ui:
                     ui.messageBox(
                         "Feil ved oppdatering av brukerparameter "
-                        f"'{defn.name}' med uttrykk '{expr}'"
+                        f"'{defn.name}'"
                     )
                 raise
 
         # Opprett ny parameter
         try:
-            value_input = adsk.core.ValueInput.createByString(expr)
-            param = user_params.add(defn.name, value_input, defn.unit, defn.comment)
+            value_input = adsk.core.ValueInput.createByReal(value_internal)
+            param = user_params.add(defn.name, value_input, unit_for_param, defn.comment)
             registered[defn.name] = param
             return param
         except Exception:
             if ui:
                 ui.messageBox(
                     "Feil ved opprettelse av brukerparameter "
-                    f"'{defn.name}' med uttrykk '{expr}'"
+                    f"'{defn.name}'"
                 )
             raise
 
@@ -275,67 +313,61 @@ def compute_performance_metrics(
     }
 
 
-def create_component_records(
-    design: adsk.fusion.Design, geom: Dict[str, float]
-) -> Dict[str, ComponentRecord]:
+def create_component_records(design: adsk.fusion.Design, geom: Dict[str, float]) -> Dict[str, ComponentRecord]:
     root = design.rootComponent
-    occurrences = root.occurrences
-    records: Dict[str, ComponentRecord] = {}
+    occs = root.occurrences
+    R: Dict[str, ComponentRecord] = {}
 
-    def _new_component(name: str, transform: Optional[adsk.core.Matrix3D] = None) -> ComponentRecord:
-        matrix = transform or adsk.core.Matrix3D.create()
-        occurrence = occurrences.addNewComponent(matrix)
-        occurrence.component.name = name
-        return ComponentRecord(name=name, component=occurrence.component, occurrence=occurrence, bodies=[])
+    def _new(name: str, m: Optional[adsk.core.Matrix3D] = None) -> ComponentRecord:
+        m = m or adsk.core.Matrix3D.create()
+        occ = occs.addNewComponent(m)
+        occ.component.name = name
+        return ComponentRecord(name=name, component=occ.component, occurrence=occ, bodies=[])
 
-    base_transform = adsk.core.Matrix3D.create()
-    records["frame"] = _new_component("Ramme og bunnplate", base_transform)
+    # 0) Ramme/bunnplate på origo, grunnlagt (grounded)
+    R["frame"] = _new("Ramme og bunnplate")
+    R["frame"].occurrence.isGrounded = True
 
-    work_transform = adsk.core.Matrix3D.create()
-    work_transform.translation = adsk.core.Vector3D.create(
-        0,
-        0,
-        mm_to_cm(geom["base_thick"]),
-    )
-    records["work_cylinder"] = _new_component("Arbeidssylinder", work_transform)
+    # Plassering: separer sylindre langs X, legg dem på bunnplata i Z
+    z_plate = geom["base_thick"]        # mm
+    x_half  = geom["offset"] * 0.5      # mm
 
-    disp_transform = adsk.core.Matrix3D.create()
-    disp_transform.setToRotation(
-        math.radians(param_angle(design, "ANGLE_CYL")),
-        adsk.core.Vector3D.create(1, 0, 0),
-        adsk.core.Point3D.create(0, 0, 0),
-    )
-    disp_transform.translation = adsk.core.Vector3D.create(
-        mm_to_cm(geom["offset"]),
-        0,
-        mm_to_cm(geom["base_thick"] + geom["len_disp"] / 2.0),
-    )
-    records["displacer_cylinder"] = _new_component("Fortrengersylinder", disp_transform)
+    # 1) Arbeidssylinder — vertikal (akse = Z), til venstre
+    m_work = adsk.core.Matrix3D.create()
+    m_work.translation = adsk.core.Vector3D.create(mm_to_cm(-x_half), 0, mm_to_cm(z_plate))
+    R["work_cylinder"] = _new("Arbeidssylinder", m_work)
 
-    piston_transform = adsk.core.Matrix3D.create()
-    piston_transform.translation = adsk.core.Vector3D.create(
-        0,
-        0,
-        mm_to_cm(geom["base_thick"] + geom["len_work"] / 2.0),
-    )
-    records["work_piston"] = _new_component("Arbeidsstempel", piston_transform)
+    # 2) Fortrengersylinder — 90° vippet (akse = Y), til høyre
+    m_disp = adsk.core.Matrix3D.create()
+    m_disp.setToRotation(math.radians(90.0), adsk.core.Vector3D.create(1,0,0), adsk.core.Point3D.create(0,0,0))
+    m_disp.translation = adsk.core.Vector3D.create(mm_to_cm(+x_half), 0, mm_to_cm(z_plate))
+    R["displacer_cylinder"] = _new("Fortrengersylinder", m_disp)
 
-    disp_piston_transform = adsk.core.Matrix3D.create()
-    disp_piston_transform.translation = adsk.core.Vector3D.create(
-        mm_to_cm(geom["offset"]),
-        0,
-        mm_to_cm(geom["base_thick"] + geom["len_disp"] / 2.0),
-    )
-    records["displacer"] = _new_component("Fortrenger", disp_piston_transform)
+    # 3) Stempler — start inne i sine respektive sylindre
+    m_wp = adsk.core.Matrix3D.create()
+    m_wp.translation = adsk.core.Vector3D.create(mm_to_cm(-x_half), 0, mm_to_cm(z_plate + geom["len_work"]/2.0))
+    R["work_piston"] = _new("Arbeidsstempel", m_wp)
 
-    crank_transform = adsk.core.Matrix3D.create()
-    crank_transform.translation = adsk.core.Vector3D.create(0, mm_to_cm(geom["base_width"] / 2.0 - 25.0), mm_to_cm(geom["base_thick"] / 2.0))
-    records["crankshaft"] = _new_component("Veivaksel", crank_transform)
+    m_dp = adsk.core.Matrix3D.create()
+    m_dp.setToRotation(math.radians(90.0), adsk.core.Vector3D.create(1,0,0), adsk.core.Point3D.create(0,0,0))
+    m_dp.translation = adsk.core.Vector3D.create(mm_to_cm(+x_half), 0, mm_to_cm(z_plate + geom["len_disp"]/2.0))
+    R["displacer"] = _new("Fortrenger", m_dp)
 
-    records["flywheel"] = _new_component("Svinghjul")
-    records["connecting_rods"] = _new_component("Koblingsstenger")
-    records["thermal"] = _new_component("Varme og kjøl")
-    return records
+    # 4) Veivaksel og svinghjul — foran (positiv Y), i høyde rundt midt-sylinder
+    y_front = geom["base_width"]/2.0 - 25.0
+    z_shaft = z_plate + max(geom["len_work"], geom["len_disp"])/2.0
+
+    m_crank = adsk.core.Matrix3D.create()
+    m_crank.translation = adsk.core.Vector3D.create(0, mm_to_cm(y_front), mm_to_cm(z_shaft))
+    R["crankshaft"] = _new("Veivaksel", m_crank)
+
+    m_fly = adsk.core.Matrix3D.create()
+    m_fly.translation = adsk.core.Vector3D.create(0, mm_to_cm(y_front + 10.0), mm_to_cm(z_shaft))
+    R["flywheel"] = _new("Svinghjul", m_fly)
+
+    R["connecting_rods"] = _new("Koblingsstenger")
+    R["thermal"] = _new("Varme og kjøl")
+    return R
 
 
 def param_angle(design: adsk.fusion.Design, name: str) -> float:
@@ -678,22 +710,33 @@ def apply_materials_and_appearances(
                 body.appearance = appearance
 
 
-def build_joints(
-    design: adsk.fusion.Design, records: Dict[str, ComponentRecord], geom: Dict[str, float]
-) -> None:
+def build_joints(design: adsk.fusion.Design, records: Dict[str, ComponentRecord], geom: Dict[str, float]) -> None:
     root = design.rootComponent
-    joints = root.asBuiltJoints
-    base_occ = records["frame"].occurrence
-    for key, record in records.items():
-        if key == "frame":
-            continue
-        try:
-            joint_input = joints.createInput(base_occ, record.occurrence)
-            joint_input.setAsRigidJointMotion()
-            joints.add(joint_input)
-        except Exception:
-            continue
-    design.attributes.add(_ATTR_GROUP, "phase_offset_deg", f"{geom['offset']:.1f}@{param_angle(design, 'ANGLE_CYL'):.1f}")
+    asb_joints = root.asBuiltJoints
+
+    frame_occ = records["frame"].occurrence
+
+    def rigid_to_frame(child_occ: adsk.fusion.Occurrence) -> None:
+        """Lock an occurrence rigidly to the grounded frame."""
+
+        ji = asb_joints.createInput(child_occ, frame_occ, None)
+        ji.setAsRigidJointMotion()
+        asb_joints.add(ji)
+
+    rigid_to_frame(records["work_cylinder"].occurrence)
+    rigid_to_frame(records["displacer_cylinder"].occurrence)
+    rigid_to_frame(records["thermal"].occurrence)
+    rigid_to_frame(records["crankshaft"].occurrence)
+    rigid_to_frame(records["flywheel"].occurrence)
+    rigid_to_frame(records["work_piston"].occurrence)
+    rigid_to_frame(records["displacer"].occurrence)
+    rigid_to_frame(records["connecting_rods"].occurrence)
+
+    # TODO(codex_fusionapi_v1.9): Reintroduce realistic kinematics using
+    # root.joints and explicit JointGeometry references (revolute for
+    # crankshaft/flywheel, slider for pistons).
+
+    design.attributes.add(_ATTR_GROUP, "phase_deg", "90")
 
 
 def generate_drawings(design: adsk.fusion.Design, records: Dict[str, ComponentRecord]) -> None:
