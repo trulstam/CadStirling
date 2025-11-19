@@ -712,46 +712,42 @@ def apply_materials_and_appearances(
 
 def build_joints(design: adsk.fusion.Design, records: Dict[str, ComponentRecord], geom: Dict[str, float]) -> None:
     root = design.rootComponent
-    joints = root.joints
+    asb_joints = root.asBuiltJoints
 
     frame_occ = records["frame"].occurrence
-    x_axis = root.xConstructionAxis
-    y_axis = root.yConstructionAxis
-    z_axis = root.zConstructionAxis
 
-    if not all((x_axis, y_axis, z_axis)):
-        raise BuilderError("Standard aksene til rotkomponenten er ikke tilgjengelige for joints.")
-
-    def rigid_to_frame(child_record: ComponentRecord):
-        ji = joints.createInput(child_record.occurrence, frame_occ)
+    def rigid_to_frame(child_occ: adsk.fusion.Occurrence) -> None:
+        ji = asb_joints.createInput(child_occ, frame_occ)
         ji.setAsRigidJointMotion()
-        joints.add(ji)
+        asb_joints.add(ji)
 
-    rigid_to_frame(records["work_cylinder"])
-    rigid_to_frame(records["displacer_cylinder"])
-    rigid_to_frame(records["thermal"])
+    rigid_to_frame(records["work_cylinder"].occurrence)
+    rigid_to_frame(records["displacer_cylinder"].occurrence)
+    rigid_to_frame(records["thermal"].occurrence)
 
-    crank_record = records["crankshaft"]
-    ji_crank = joints.createInput(crank_record.occurrence, frame_occ)
-    ji_crank.setAsRevoluteJointMotion(adsk.fusion.JointDirections.CustomJointDirection, x_axis)
-    joints.add(ji_crank)
+    crank_occ = records["crankshaft"].occurrence
+    ji_crank = asb_joints.createInput(crank_occ, frame_occ)
+    ji_crank.setAsRevoluteJointMotion(adsk.fusion.JointDirections.XAxisJointDirection)
+    asb_joints.add(ji_crank)
 
-    fly_record = records["flywheel"]
-    ji_fly = joints.createInput(fly_record.occurrence, crank_record.occurrence)
-    ji_fly.setAsRevoluteJointMotion(adsk.fusion.JointDirections.CustomJointDirection, x_axis)
-    joints.add(ji_fly)
+    fly_occ = records["flywheel"].occurrence
+    ji_fly = asb_joints.createInput(fly_occ, crank_occ)
+    ji_fly.setAsRevoluteJointMotion(adsk.fusion.JointDirections.XAxisJointDirection)
+    asb_joints.add(ji_fly)
 
-    work_piston = records["work_piston"]
-    work_cylinder = records["work_cylinder"]
-    ji_wp = joints.createInput(work_piston.occurrence, work_cylinder.occurrence)
-    ji_wp.setAsSliderJointMotion(adsk.fusion.JointDirections.CustomJointDirection, z_axis)
-    joints.add(ji_wp)
+    ji_wp = asb_joints.createInput(
+        records["work_piston"].occurrence,
+        records["work_cylinder"].occurrence,
+    )
+    ji_wp.setAsSliderJointMotion(adsk.fusion.JointDirections.ZAxisJointDirection)
+    asb_joints.add(ji_wp)
 
-    displacer = records["displacer"]
-    displacer_cyl = records["displacer_cylinder"]
-    ji_dp = joints.createInput(displacer.occurrence, displacer_cyl.occurrence)
-    ji_dp.setAsSliderJointMotion(adsk.fusion.JointDirections.CustomJointDirection, y_axis)
-    joints.add(ji_dp)
+    ji_dp = asb_joints.createInput(
+        records["displacer"].occurrence,
+        records["displacer_cylinder"].occurrence,
+    )
+    ji_dp.setAsSliderJointMotion(adsk.fusion.JointDirections.YAxisJointDirection)
+    asb_joints.add(ji_dp)
 
     design.attributes.add(_ATTR_GROUP, "phase_deg", "90")
 
