@@ -717,7 +717,7 @@ def build_joints(design: adsk.fusion.Design, records: Dict[str, ComponentRecord]
     frame_occ = records["frame"].occurrence
 
     def rigid_to_frame(child_occ: adsk.fusion.Occurrence) -> None:
-        ji = asb_joints.createInput(child_occ, frame_occ)
+        ji = asb_joints.createInput(child_occ, frame_occ, None)
         ji.setAsRigidJointMotion()
         asb_joints.add(ji)
 
@@ -726,18 +726,19 @@ def build_joints(design: adsk.fusion.Design, records: Dict[str, ComponentRecord]
     rigid_to_frame(records["thermal"].occurrence)
 
     crank_occ = records["crankshaft"].occurrence
-    ji_crank = asb_joints.createInput(crank_occ, frame_occ)
+    ji_crank = asb_joints.createInput(crank_occ, frame_occ, None)
     ji_crank.setAsRevoluteJointMotion(adsk.fusion.JointDirections.XAxisJointDirection)
     asb_joints.add(ji_crank)
 
     fly_occ = records["flywheel"].occurrence
-    ji_fly = asb_joints.createInput(fly_occ, crank_occ)
+    ji_fly = asb_joints.createInput(fly_occ, crank_occ, None)
     ji_fly.setAsRevoluteJointMotion(adsk.fusion.JointDirections.XAxisJointDirection)
     asb_joints.add(ji_fly)
 
     ji_wp = asb_joints.createInput(
         records["work_piston"].occurrence,
         records["work_cylinder"].occurrence,
+        None,
     )
     ji_wp.setAsSliderJointMotion(adsk.fusion.JointDirections.ZAxisJointDirection)
     asb_joints.add(ji_wp)
@@ -745,6 +746,7 @@ def build_joints(design: adsk.fusion.Design, records: Dict[str, ComponentRecord]
     ji_dp = asb_joints.createInput(
         records["displacer"].occurrence,
         records["displacer_cylinder"].occurrence,
+        None,
     )
     ji_dp.setAsSliderJointMotion(adsk.fusion.JointDirections.YAxisJointDirection)
     asb_joints.add(ji_dp)
