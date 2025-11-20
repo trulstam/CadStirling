@@ -11,6 +11,8 @@ from typing import Dict, List, Sequence
 import adsk.core
 import adsk.fusion
 
+from scripts.shared.config_loader import load_machine_park, load_material_catalog
+
 ID_TAG = "codex_fusionapi_v1.2"
 _COMPLIANCE_BANNER = f"COMPLIANCE BANNER :: ID {ID_TAG} :: knife_gd66_carver"
 
@@ -279,23 +281,44 @@ def _tag_named_faces(component: adsk.fusion.Component, faces: Sequence[str]) -> 
 
 def _validate_material_and_process(design: adsk.fusion.Design) -> List[str]:
     errors: List[str] = []
+    machine_cfg = load_machine_park()
+    materials = load_material_catalog()
+    catalog_codes = {str(entry.get("code", "")).upper() for entry in materials}
+
+    cnc_cfg = machine_cfg.get("cnc_mill", {}).get("volume_mm", {})
+    cnc_x = float(cnc_cfg.get("x", 400.0))
+    cnc_y = float(cnc_cfg.get("y", 300.0))
+    cnc_z = float(cnc_cfg.get("z", 120.0))
+
+    printer_cfg = machine_cfg.get("printer", {}).get("volume_mm", {})
+    printer_x = float(printer_cfg.get("x", 220.0))
+    printer_y = float(printer_cfg.get("y", 220.0))
+    printer_z = float(printer_cfg.get("z", 250.0))
+
+    lathe_cfg = machine_cfg.get("lathe", {})
+    lathe_swing = float(lathe_cfg.get("swing_diameter_mm", 180.0))
+
     blade_length = _get_param_value(design, "blade_length")
     blade_width_raw = _get_param_value(design, "blade_width_raw")
     spine_thickness_raw = _get_param_value(design, "spine_thickness_raw")
     handle_length = _get_param_value(design, "handle_length")
     handle_thickness = _get_param_value(design, "handle_thickness")
 
-    if blade_length > 400 or blade_width_raw > 300 or spine_thickness_raw > 120:
-        errors.append("CNC-fresens arbeidsrom (400x300x120 mm) overskrides av bladet.")
-    if handle_length > 220 or handle_thickness > 120:
-        errors.append("3D-printerens volum (220x220x250 mm) overskrides av håndtaket.")
-    if spine_thickness_raw > 180:
-        errors.append("Dreibenkens Ø180 mm begrensning overskrides for ryggen.")
+    if blade_length > cnc_x or blade_width_raw > cnc_y or spine_thickness_raw > cnc_z:
+        errors.append(
+            f"CNC-fresens arbeidsrom ({cnc_x}x{cnc_y}x{cnc_z} mm) overskrides av bladet."
+        )
+    if handle_length > printer_x or handle_thickness > printer_z:
+        errors.append(
+            f"3D-printerens volum ({printer_x}x{printer_y}x{printer_z} mm) overskrides av håndtaket."
+        )
+    if spine_thickness_raw > lathe_swing:
+        errors.append(f"Dreibenkens Ø{lathe_swing} mm begrensning overskrides for ryggen.")
 
-    allowed_materials = set(name.lower() for name in MANUFACTURING_LAYER["materials"])
-    requested = {"14c28n", "bjørk"}
-    if not requested.issubset(allowed_materials):
-        errors.append("Ønsket materialvalg er ikke i tilgjengelighetslisten.")
+    required_codes = {"14C28N", "BIRCH"}
+    missing = sorted(code for code in required_codes if code not in catalog_codes)
+    if missing:
+        errors.append("Manglende materialkoder i config: " + ", ".join(missing))
 
     return errors
 

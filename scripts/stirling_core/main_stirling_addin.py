@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import csv
 import datetime as _dt
 import math
 from dataclasses import dataclass
@@ -13,6 +12,8 @@ from typing import Dict, Iterable, List, Optional, Tuple
 import adsk.core
 import adsk.fusion
 import traceback
+
+from scripts.shared.config_loader import load_machine_park, load_material_catalog
 
 ID_TAG = "codex_fusionapi_v1.9"
 _COMPLIANCE_BANNER = f"COMPLIANCE BANNER :: ID {ID_TAG} :: stirling_core"
@@ -524,53 +525,6 @@ def compute_performance_metrics(
     }
 
 
-def load_machine_config() -> Dict[str, float]:
-    """Returnerer maskinpark med konservative standardgrenser."""
-
-    default_cfg = {
-        "cnc_bed_x": 320.0,
-        "cnc_bed_y": 220.0,
-        "cnc_bed_z": 110.0,
-        "lathe_swing": 180.0,
-        "lathe_between_centers": 300.0,
-    }
-
-    path = PROJECT_ROOT / "config" / "machines.yaml"
-    if not path.exists():
-        return default_cfg
-
-    try:
-        import yaml  # type: ignore
-
-        loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        if isinstance(loaded, dict):
-            merged = {**default_cfg, **{k: float(v) for k, v in loaded.items() if v is not None}}
-            return merged
-    except Exception:
-        return default_cfg
-    return default_cfg
-
-
-def load_material_db() -> Dict[str, Dict[str, str]]:
-    """Les inn et enkelt materialkartotek hvis det finnes."""
-
-    db: Dict[str, Dict[str, str]] = {}
-    path = PROJECT_ROOT / "config" / "materials.csv"
-    if not path.exists():
-        return db
-    try:
-        with path.open("r", encoding="utf-8") as handle:
-            reader = csv.DictReader(handle)
-            for row in reader:
-                code = row.get("code") or row.get("kode")
-                if not code:
-                    continue
-                db[str(code)] = {k: v for k, v in row.items() if v is not None}
-    except Exception:
-        return db
-    return db
-
-
 def apply_production_constraints(
     design: adsk.fusion.Design,
     params: Dict[str, adsk.fusion.UserParameter],
@@ -584,29 +538,56 @@ def apply_production_constraints(
     """
 
     _ = params  # Parametre benyttes senere for fullstendig validering
-    machine_cfg = load_machine_config()
-    material_db = load_material_db()
+    machine_cfg = load_machine_park()
+    material_db = load_material_catalog()
 
     report: Dict[str, str] = {}
 
+    cnc_cfg = machine_cfg.get("cnc_mill", {}).get("volume_mm", {})
+    cnc_x = float(cnc_cfg.get("x", 320.0))
+    cnc_y = float(cnc_cfg.get("y", 220.0))
+    cnc_z = float(cnc_cfg.get("z", 110.0))
+
     # Sjekk om bunnplaten får plass på standard CNC-fres.
-    fits_x = geom["base_length"] <= machine_cfg["cnc_bed_x"]
-    fits_y = geom["base_width"] <= machine_cfg["cnc_bed_y"]
-    fits_z = geom["base_thick"] <= machine_cfg["cnc_bed_z"]
+    fits_x = geom["base_length"] <= cnc_x
+    fits_y = geom["base_width"] <= cnc_y
+    fits_z = geom["base_thick"] <= cnc_z
     report["cnc_bed"] = "ok" if all((fits_x, fits_y, fits_z)) else "oversize"
 
     # Sjekk om sylindre kan maskineres på standard dreiebenk.
-    fits_swing = max(geom["od_work"], geom["od_disp"]) <= machine_cfg["lathe_swing"]
-    fits_length = max(geom["len_work"], geom["len_disp"]) <= machine_cfg["lathe_between_centers"]
+    lathe_cfg = machine_cfg.get("lathe", {})
+    fits_swing = max(geom["od_work"], geom["od_disp"]) <= float(lathe_cfg.get("swing_diameter_mm", 180.0))
+    fits_length = max(geom["len_work"], geom["len_disp"]) <= float(lathe_cfg.get("between_centers_mm", 300.0))
     report["lathe"] = "ok" if all((fits_swing, fits_length)) else "oversize"
 
+    # Sjekk om printervolumet er tilstrekkelig for hel montering/print av prototyper.
+    printer_cfg = machine_cfg.get("printer", {}).get("volume_mm", {})
+    printer_x = float(printer_cfg.get("x", 220.0))
+    printer_y = float(printer_cfg.get("y", 220.0))
+    printer_z = float(printer_cfg.get("z", 250.0))
+    assembly_height = geom["base_thick"] + max(geom["frame_height"], geom["len_work"], geom["len_disp"])
+    printer_ok = (
+        geom["base_length"] <= printer_x
+        and geom["base_width"] <= printer_y
+        and assembly_height <= printer_z
+    )
+    report["printer"] = "ok" if printer_ok else "oversize"
+
     # Rapporter materialkoder dersom de finnes i databasen.
-    material_codes = {"Glass - Clear": "GLASS_CLEAR", "Aluminum 6061": "AL6061"}
-    matched_codes = [code for code in material_codes.values() if code in material_db]
-    if material_db:
-        report["material_db"] = f"loaded ({len(matched_codes)} matches)"
+    catalog_codes = {str(entry.get("code", "")).upper() for entry in material_db}
+    required_codes = {
+        "AL6061",
+        "GLASS_QUARTZ",
+        "STEEL_GENERIC",
+        "BRASS_GENERIC",
+        "COPPER_GENERIC",
+        "CFRP_SHEET",
+    }
+    missing = sorted(code for code in required_codes if code not in catalog_codes)
+    if missing:
+        report["material_db"] = "missing: " + ", ".join(missing)
     else:
-        report["material_db"] = "missing"
+        report["material_db"] = "ok"
 
     for key, value in report.items():
         design.attributes.add(_ATTR_GROUP, f"production_{key}", value)

@@ -32,6 +32,11 @@ Kopier (eller symlink) `scripts/`-mappen hit slik at Fusion 360 finner skriptene
 - `scripts/shared/` er stedet for felles biblioteksfunksjoner (parametre, helpers, logging osv.).
 - `scripts/stirling_core/` og `scripts/knife_gd66_carver/` rommer henholdsvis Stirlingmotor- og knivdesign, med egne entry-skript (se under).
 
+### Maskin- og materialkonfigurasjon
+- `config/machines.yaml` beskriver CNC-fres, dreiebenk og 3D-printer med byggevolumer (kan også leveres som `machines.json`).
+- `config/materials.json` inneholder materialkoder som skriptene validerer mot før geometri genereres.
+- `scripts/shared/config_loader.py` lastes av begge designfamilier slik at maskinkapasitet og materialtilgjengelighet er konsistent på tvers av skriptene. Juster filene i `config/` for å matche din maskinpark.
+
 ## Designstruktur for skript
 - Hver designfamilie har en egen mappe under `scripts/` (f.eks. `scripts/stirling_core/`).
 - Hver mappe har ett tydelig entry-point (`main_*_addin.py`) som Fusion 360 peker til fra Scripts/Add-ins.

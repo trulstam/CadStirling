@@ -1,0 +1,52 @@
+{
+  "materials": [
+    {
+      "code": "AL6061",
+      "name": "Aluminium 6061",
+      "form": "plate",
+      "dimensions_mm": {"thickness": 12, "width": 200, "length": 300}
+    },
+    {
+      "code": "GLASS_QUARTZ",
+      "name": "Kvartsglassrør",
+      "form": "tube",
+      "dimensions_mm": {"id": 63, "od": 70, "length": 250}
+    },
+    {
+      "code": "STEEL_GENERIC",
+      "name": "Ulegeret stål",
+      "form": "round",
+      "dimensions_mm": {"diameter": 25, "length": 500}
+    },
+    {
+      "code": "BRASS_GENERIC",
+      "name": "Messing",
+      "form": "round",
+      "dimensions_mm": {"diameter": 12, "length": 300}
+    },
+    {
+      "code": "COPPER_GENERIC",
+      "name": "Kobber",
+      "form": "plate",
+      "dimensions_mm": {"thickness": 5, "width": 200, "length": 200}
+    },
+    {
+      "code": "CFRP_SHEET",
+      "name": "Karbonfiberlaminat",
+      "form": "plate",
+      "dimensions_mm": {"thickness": 3, "width": 150, "length": 300}
+    },
+    {
+      "code": "14C28N",
+      "name": "Sandvik 14C28N",
+      "form": "flat",
+      "dimensions_mm": {"thickness": 4.7, "width": 30, "length": 250}
+    },
+    {
+      "code": "BIRCH",
+      "name": "Bjørk",
+      "form": "handle_scale",
+      "dimensions_mm": {"thickness": 6, "width": 40, "length": 120}
+    }
+  ]
+}

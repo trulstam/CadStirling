@@ -1,0 +1,17 @@
+machines:
+  cnc_mill:
+    name: "Verktøyfres benk"
+    volume_mm:
+      x: 400
+      y: 300
+      z: 120
+  lathe:
+    name: "Benkedreiebenk"
+    swing_diameter_mm: 180
+    between_centers_mm: 300
+  printer:
+    name: "FFF-printer"
+    volume_mm:
+      x: 220
+      y: 220
+      z: 250
