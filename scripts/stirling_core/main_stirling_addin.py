@@ -106,11 +106,14 @@ def run(context: str) -> None:
         records, geom, metrics = create_geometry(design, params)
         layout_table = build_layout_table(params, geom)
         apply_layout(design.rootComponent, records, layout_table)
+        production_report = apply_production_constraints(design, params, geom)
         clearance_report = evaluate_clearances(params, geom)
         create_kinematics(design, records, geom)
         generate_drawings(design, records)
-        export_BOM(design, records, params, geom, metrics, clearance_report)
-        summarize(ui, metrics, clearance_report)
+        export_BOM(
+            design, records, params, geom, metrics, clearance_report, production_report
+        )
+        summarize(ui, metrics, clearance_report, production_report)
     except Exception:  # pragma: no cover - Fusion viser detaljer
         if ui:
             ui.messageBox(f"Stirlingmotoren feilet:\n{traceback.format_exc()}")
@@ -155,6 +158,8 @@ def build_layout_table(
     disp_mid = base_z + geom["len_disp"] / 2.0
     y_front = geom["base_width"] / 2.0 - 25.0
     z_shaft = base_z + max(geom["len_work"], geom["len_disp"]) / 2.0
+    rod_y = -geom["base_width"] / 2.0 + 25.0
+    rod_z = base_z + geom["len_work"] / 2.0
 
     layout: Dict[str, LayoutEntry] = {
         "frame": LayoutEntry(origin=(0.0, 0.0, 0.0), orientation=(0.0, 0.0, 0.0), parent=None),
@@ -189,12 +194,12 @@ def build_layout_table(
             parent="crankshaft",
         ),
         "thermal": LayoutEntry(
-            origin=(0.0, 0.0, base_z + geom["len_work"]),
+            origin=(0.0, 0.0, -20.0),
             orientation=(0.0, 0.0, 0.0),
             parent="frame",
         ),
         "connecting_rods": LayoutEntry(
-            origin=(0.0, y_front, z_shaft),
+            origin=(0.0, rod_y, rod_z),
             orientation=(0.0, 0.0, 0.0),
             parent="frame",
         ),
@@ -235,6 +240,7 @@ def export_BOM(
     geom: Dict[str, float],
     metrics: Dict[str, float],
     clearances: Dict[str, float],
+    production_report: Dict[str, str],
 ) -> None:
     """Generer eksportfiler, stykk-liste og metadata."""
 
@@ -244,7 +250,7 @@ def export_BOM(
     write_arbeidsplan()
     update_changelog()
     write_simulation_stub(metrics)
-    apply_metadata(design, metrics, clearances)
+    apply_metadata(design, metrics, clearances, production_report)
 
 
 def resolve_layout_table(layout: Dict[str, LayoutEntry]) -> Dict[str, LayoutEntry]:
@@ -516,6 +522,96 @@ def compute_performance_metrics(
         "dead_volume_cm3": dead_volume_cm3,
         "cr_estimate": cr_estimate,
     }
+
+
+def load_machine_config() -> Dict[str, float]:
+    """Returnerer maskinpark med konservative standardgrenser."""
+
+    default_cfg = {
+        "cnc_bed_x": 320.0,
+        "cnc_bed_y": 220.0,
+        "cnc_bed_z": 110.0,
+        "lathe_swing": 180.0,
+        "lathe_between_centers": 300.0,
+    }
+
+    path = PROJECT_ROOT / "config" / "machines.yaml"
+    if not path.exists():
+        return default_cfg
+
+    try:
+        import yaml  # type: ignore
+
+        loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if isinstance(loaded, dict):
+            merged = {**default_cfg, **{k: float(v) for k, v in loaded.items() if v is not None}}
+            return merged
+    except Exception:
+        return default_cfg
+    return default_cfg
+
+
+def load_material_db() -> Dict[str, Dict[str, str]]:
+    """Les inn et enkelt materialkartotek hvis det finnes."""
+
+    db: Dict[str, Dict[str, str]] = {}
+    path = PROJECT_ROOT / "config" / "materials.csv"
+    if not path.exists():
+        return db
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                code = row.get("code") or row.get("kode")
+                if not code:
+                    continue
+                db[str(code)] = {k: v for k, v in row.items() if v is not None}
+    except Exception:
+        return db
+    return db
+
+
+def apply_production_constraints(
+    design: adsk.fusion.Design,
+    params: Dict[str, adsk.fusion.UserParameter],
+    geom: Dict[str, float],
+) -> Dict[str, str]:
+    """Evaluer enkle maskin-/materialgrenser og logg resultatet.
+
+    Denne fasen er bevisst lettvekts og skal senere kobles mot
+    kinematikk og BOM-berikelse. Rapporten lagres som designattributter
+    slik at Fusion-brukeren kan inspisere begrensningene.
+    """
+
+    _ = params  # Parametre benyttes senere for fullstendig validering
+    machine_cfg = load_machine_config()
+    material_db = load_material_db()
+
+    report: Dict[str, str] = {}
+
+    # Sjekk om bunnplaten får plass på standard CNC-fres.
+    fits_x = geom["base_length"] <= machine_cfg["cnc_bed_x"]
+    fits_y = geom["base_width"] <= machine_cfg["cnc_bed_y"]
+    fits_z = geom["base_thick"] <= machine_cfg["cnc_bed_z"]
+    report["cnc_bed"] = "ok" if all((fits_x, fits_y, fits_z)) else "oversize"
+
+    # Sjekk om sylindre kan maskineres på standard dreiebenk.
+    fits_swing = max(geom["od_work"], geom["od_disp"]) <= machine_cfg["lathe_swing"]
+    fits_length = max(geom["len_work"], geom["len_disp"]) <= machine_cfg["lathe_between_centers"]
+    report["lathe"] = "ok" if all((fits_swing, fits_length)) else "oversize"
+
+    # Rapporter materialkoder dersom de finnes i databasen.
+    material_codes = {"Glass - Clear": "GLASS_CLEAR", "Aluminum 6061": "AL6061"}
+    matched_codes = [code for code in material_codes.values() if code in material_db]
+    if material_db:
+        report["material_db"] = f"loaded ({len(matched_codes)} matches)"
+    else:
+        report["material_db"] = "missing"
+
+    for key, value in report.items():
+        design.attributes.add(_ATTR_GROUP, f"production_{key}", value)
+
+    return report
 
 
 def create_component_records(design: adsk.fusion.Design) -> Dict[str, ComponentRecord]:
@@ -1081,20 +1177,27 @@ def apply_metadata(
     design: adsk.fusion.Design,
     metrics: Dict[str, float],
     clearances: Dict[str, float],
+    production_report: Dict[str, str],
 ) -> None:
     design.attributes.add(_ATTR_GROUP, "stroke_volume_cm3", f"{metrics['stroke_volume_cm3']:.3f}")
     design.attributes.add(_ATTR_GROUP, "dead_volume_cm3", f"{metrics['dead_volume_cm3']:.3f}")
     design.attributes.add(_ATTR_GROUP, "cr_estimate", f"{metrics['cr_estimate']:.3f}")
     for name, value in clearances.items():
         design.attributes.add(_ATTR_GROUP, f"clearance_{name}", f"{value:.3f} mm")
+    for name, value in production_report.items():
+        design.attributes.add(_ATTR_GROUP, f"production_{name}", value)
 
 
 def summarize(
-    ui: Optional[adsk.core.UserInterface], metrics: Dict[str, float], clearances: Dict[str, float]
+    ui: Optional[adsk.core.UserInterface],
+    metrics: Dict[str, float],
+    clearances: Dict[str, float],
+    production_report: Dict[str, str],
 ) -> None:
     if not ui:
         return
     clearance_text = "\n".join(f"- {name}: {value:.2f} mm" for name, value in clearances.items())
+    production_text = "\n".join(f"- {k}: {v}" for k, v in production_report.items()) or "- Ingen data"
     ui.messageBox(
         (
             "Stirlingmotoren er regenerert.\n"
@@ -1102,7 +1205,9 @@ def summarize(
             f"Dødvolum: {metrics['dead_volume_cm3']:.2f} cm³\n"
             f"CR estimert: {metrics['cr_estimate']:.3f}\n\n"
             "Klaringer:\n"
-            f"{clearance_text}"
+            f"{clearance_text}\n\n"
+            "Produksjonsbegrensninger:\n"
+            f"{production_text}"
         )
     )
 
